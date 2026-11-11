@@ -1,5 +1,5 @@
 // Guarda la app en el móvil para que funcione sin conexión y avisa de tareas atascadas.
-const CACHE = 'mi-agenda-v3';
+const CACHE = 'mi-agenda-v4';
 const ARCHIVOS = ['./', 'index.html', 'styles.css', 'app.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', e => {

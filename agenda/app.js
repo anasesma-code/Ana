@@ -74,6 +74,7 @@ const ui = {
   agenda: { sel: HOY(), mes: HOY().slice(0, 7), vista: ajuste('vista.agenda') || 'dias', dias: 7 },
   trabajo: { sel: HOY(), mes: HOY().slice(0, 7), vista: ajuste('vista.trabajo') || 'dias', dias: 7 },
   compraModo: 'lista',
+  menuModo: 'semana',
   semana: iso(mondayOf(new Date())),
   mesDinero: HOY().slice(0, 7),
   secCompra: 'Otros',
@@ -674,10 +675,66 @@ async function buscarPreciosIA() {
 }
 
 /* ============================================================
-   Menú semanal
+   Menú semanal + control de calorías
    ============================================================ */
+const COMIDAS = [['desayuno', 'Desayuno'], ['comida', 'Comida'], ['merienda', 'Merienda'], ['cena', 'Cena']];
+const MACROS = [['kcal', 'kcal'], ['p', 'Prot. g'], ['g', 'Grasa g'], ['hc', 'Hidr. g']];
+const ACTIVIDAD = [['1.2', 'Sedentaria (casi sin ejercicio)'], ['1.375', 'Ligera (ejercicio 1-3 días/semana)'], ['1.55', 'Moderada (3-5 días/semana)'], ['1.725', 'Alta (6-7 días/semana)']];
+const num = n => Math.round(n).toLocaleString('es-ES', { useGrouping: 'always' });
+const salud = () => (db.salud ||= { perfil: null, pesos: [] });
+
+function totalDia(m) {
+  const t = { kcal: 0, p: 0, g: 0, hc: 0, n: 0 };
+  if (!m) return t;
+  for (const [k] of COMIDAS) {
+    const x = m[k + 'N'];
+    if (x && x.kcal) { t.kcal += x.kcal; t.p += x.p || 0; t.g += x.g || 0; t.hc += x.hc || 0; t.n++; }
+  }
+  return t;
+}
+
+function pesoActual() {
+  const s = salud();
+  const ult = [...s.pesos].sort((a, b) => a.fecha.localeCompare(b.fecha)).pop();
+  return ult ? ult.kg : s.perfil?.peso;
+}
+
+// Mifflin-St Jeor + límite prudente de pérdida (1 % del peso por semana)
+function calcularPlan() {
+  const pf = salud().perfil;
+  if (!pf) return null;
+  const w = pesoActual();
+  const bmr = 10 * w + 6.25 * pf.altura - 5 * pf.edad + (pf.sexo === 'h' ? 5 : -161);
+  const tdee = bmr * pf.actividad;
+  const kgPerder = Math.max(0, w - pf.objetivo);
+  const semanasQuedan = Math.max(1, (parse(pf.fechaFin) - parse(HOY())) / (7 * 864e5));
+  const deficitNecesario = kgPerder / semanasQuedan * 7700 / 7;
+  const deficitMax = w * 0.01 * 7700 / 7;
+  const minimo = pf.sexo === 'h' ? 1500 : 1200;
+  let kcal = Math.max(minimo, tdee - Math.min(deficitNecesario, deficitMax));
+  const recortado = kgPerder > 0 && tdee - kcal < deficitNecesario - 5;
+  const kcalNecesarias = tdee - deficitNecesario;
+  if (pf.kcalManual) kcal = pf.kcalManual;
+  const kgSemana = Math.max(0, (tdee - kcal) * 7 / 7700);
+  const semanas = kgSemana > 0 ? kgPerder / kgSemana : Infinity;
+  // Macros: proteína 1,8 g por kg de peso objetivo, grasa 30 % (mín. 0,6 g/kg), hidratos el resto
+  const ref = Math.min(w, Math.max(pf.objetivo, 40));
+  const p = Math.min(1.8 * ref, kcal * 0.4 / 4);
+  const g = Math.max(0.6 * ref, kcal * 0.3 / 9);
+  const hc = Math.max(0, (kcal - p * 4 - g * 9) / 4);
+  return { w, bmr, tdee, kcal, kcalNecesarias, recortado, kgPerder, kgSemana, semanas, semanasQuedan, minimo, p, g, hc, manual: !!pf.kcalManual };
+}
+
 function vistaMenu() {
-  const lunes = parse(ui.semana), hoy = HOY();
+  const tabs = `<div class="pestanas" role="tablist">
+    <button role="tab" aria-selected="${ui.menuModo !== 'kcal'}" data-act="menuModo" data-v="semana">Semana</button>
+    <button role="tab" aria-selected="${ui.menuModo === 'kcal'}" data-act="menuModo" data-v="kcal">Calorías</button>
+  </div>`;
+  return tabs + (ui.menuModo === 'kcal' ? vistaCalorias() : vistaSemana());
+}
+
+function vistaSemana() {
+  const lunes = parse(ui.semana), hoy = HOY(), plan = calcularPlan();
   const esEsta = ui.semana === iso(mondayOf(new Date()));
   const rango = `${lunes.getDate()} ${lunes.toLocaleDateString('es-ES', { month: 'short' })} – ${addDays(lunes, 6).getDate()} ${addDays(lunes, 6).toLocaleDateString('es-ES', { month: 'short' })}`;
   let html = `<div class="nav-fila">
@@ -691,37 +748,204 @@ function vistaMenu() {
   for (let i = 0; i < 7; i++) {
     const s = iso(addDays(lunes, i)), m = db.menu[s] || {};
     if (m.ingredientes) hayIngr = true;
-    const plato = t => t ? `<p>${esc(t)}</p>` : `<p class="nada">Sin decidir</p>`;
+    const t = totalDia(m);
+    const plato = (k, l) => {
+      if (!m[k] && (k === 'desayuno' || k === 'merienda')) return '';
+      const n = m[k + 'N'];
+      return `<div><small>${l}${n?.kcal ? ` · ${num(n.kcal)} kcal` : ''}</small>${m[k] ? `<p>${esc(m[k])}</p>` : '<p class="nada">Sin decidir</p>'}</div>`;
+    };
+    const pct = plan && t.kcal ? Math.min(100, t.kcal / plan.kcal * 100) : 0;
     html += `<article class="menu-dia ${s === hoy ? 'hoy' : ''}" data-act="editMenu" data-d="${s}">
-      <header><span>${cap(parse(s).toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric' }))}</span>${s === hoy ? '<small>Hoy</small>' : ''}</header>
-      <div class="comidas">
-        <div><small>Comida</small>${plato(m.comida)}</div>
-        <div><small>Cena</small>${plato(m.cena)}</div>
-      </div>
+      <header><span>${cap(parse(s).toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric' }))}</span>
+        ${t.kcal ? `<small class="${plan && t.kcal > plan.kcal * 1.05 ? 'pasado' : ''}">${num(t.kcal)}${plan ? ` / ${num(plan.kcal)}` : ''} kcal</small>` : (s === hoy ? '<small>Hoy</small>' : '')}</header>
+      ${plan && t.kcal ? `<div class="barra fina ${t.kcal > plan.kcal * 1.05 ? 'mal' : ''}"><i style="width:${pct}%"></i></div>` : ''}
+      <div class="comidas">${COMIDAS.map(([k, l]) => plato(k, l)).join('')}</div>
       ${m.ingredientes ? `<div class="ingr">🛒 ${esc(m.ingredientes)}</div>` : ''}
     </article>`;
   }
   html += `<button class="btn bloque" data-act="menuCompra">🛒 Pasar los ingredientes a la lista de la compra</button>`;
-  if (!hayIngr) html += `<p class="meta" style="text-align:center;margin-top:8px">Al editar un día puedes apuntar los ingredientes que te faltan.</p>`;
+  if (!hayIngr) html += `<p class="meta" style="text-align:center;margin-top:8px">Al editar un día puedes apuntar los ingredientes que te faltan y las calorías de cada comida.</p>`;
   return html;
+}
+
+function vistaCalorias() {
+  const s = salud(), plan = calcularPlan();
+  if (!plan) {
+    return `<div class="card"><b>Calcula tus calorías</b>
+      <p class="meta" style="margin:6px 0 4px">Con tu edad, altura, peso y actividad calculo cuánto gastas al día y cuántas calorías, proteínas, grasas e hidratos te tocan para llegar a tu objetivo.</p>
+      <button class="btn prim bloque" data-act="perfil">Calcular mi plan</button></div>`;
+  }
+  const pf = s.perfil;
+  const fin = plan.semanas === Infinity ? null : addDays(new Date(), Math.round(plan.semanas * 7));
+  let html = `<div class="card resumen">
+    <div class="lbl">Tu objetivo diario${plan.manual ? ' (cifra que has puesto tú)' : ''}</div>
+    <div class="cifra">${num(plan.kcal)} kcal</div>
+    <div class="macros3">
+      <div><b>${num(plan.p)} g</b><span>Proteína</span><small>${num(plan.p * 4)} kcal</small></div>
+      <div><b>${num(plan.g)} g</b><span>Grasas</span><small>${num(plan.g * 9)} kcal</small></div>
+      <div><b>${num(plan.hc)} g</b><span>Hidratos</span><small>${num(plan.hc * 4)} kcal</small></div>
+    </div>
+    <p class="meta" style="margin-top:12px">Gastas unas <b>${num(plan.tdee)} kcal</b> al día (en reposo, ${num(plan.bmr)}).
+    ${plan.kgPerder > 0 ? (fin ? `Comiendo esto perderías unos <b>${plan.kgSemana.toLocaleString('es-ES', { maximumFractionDigits: 1 })} kg a la semana</b> y llegarías a ${num(pf.objetivo)} kg hacia <b>${fin.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })}</b>.` : 'Con esta cifra no perderías peso.') : '¡Ya estás en tu peso objetivo! Esta cifra es para mantenerte.'}</p>
+    <button class="chip" data-act="perfil" style="margin-top:8px">Cambiar mis datos</button>
+  </div>`;
+
+  if (plan.recortado && !plan.manual) {
+    html += `<div class="card aviso">
+      <b>⚠️ Tu objetivo va muy rápido</b>
+      <p class="meta">Para perder ${num(plan.kgPerder)} kg antes del ${parse(pf.fechaFin).toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' })} tendrías que comer unas <b>${num(Math.max(0, plan.kcalNecesarias))} kcal al día</b>${plan.kcalNecesarias < plan.minimo ? ', por debajo del mínimo recomendable' : ''}: más de un 1 % de tu peso a la semana.</p>
+      <p class="meta">Bajar tan rápido suele hacer perder músculo, cansa mucho y es fácil recuperar el peso. Te he puesto el ritmo máximo prudente. Si un médico o nutricionista te marca otra cifra, ponla en «Cambiar mis datos».</p>
+    </div>`;
+  }
+
+  // Hoy
+  const t = totalDia(db.menu[HOY()]);
+  const barra = (v, obj, l) => `<div class="cat"><span>${l}</span><b>${num(v)} / ${num(obj)}${l === 'Calorías' ? ' kcal' : ' g'}</b>
+    <div class="barra ${v > obj * 1.05 ? 'mal' : ''}"><i style="width:${Math.min(100, v / obj * 100)}%"></i></div></div>`;
+  html += `<div class="card"><b>Hoy</b>${t.n
+    ? barra(t.kcal, plan.kcal, 'Calorías') + barra(t.p, plan.p, 'Proteína') + barra(t.g, plan.g, 'Grasas') + barra(t.hc, plan.hc, 'Hidratos') +
+      `<p class="meta" style="margin-top:8px">${t.kcal <= plan.kcal ? `Te quedan <b>${num(plan.kcal - t.kcal)} kcal</b> para hoy.` : `Te has pasado <b>${num(t.kcal - plan.kcal)} kcal</b>.`}</p>`
+    : `<p class="meta" style="margin-top:6px">Aún no has apuntado calorías hoy.</p>`}
+    <button class="btn bloque" data-act="editMenu" data-d="${HOY()}">Apuntar lo que como hoy</button></div>`;
+
+  // Semana
+  const lunes = mondayOf(new Date());
+  let filas = '', suma = 0, dias = 0;
+  for (let i = 0; i < 7; i++) {
+    const d = iso(addDays(lunes, i)), td = totalDia(db.menu[d]);
+    if (td.n) { suma += td.kcal; dias++; }
+    filas += `<div class="dia-k ${d === HOY() ? 'hoy' : ''}"><span>${DIAS_C[i]}</span>
+      <div class="col"><i class="${td.kcal > plan.kcal * 1.05 ? 'mal' : ''}" style="height:${Math.min(100, td.kcal / plan.kcal * 80)}%"></i><em style="bottom:80%"></em></div>
+      <small>${td.n ? num(td.kcal) : '–'}</small></div>`;
+  }
+  html += `<div class="card"><b>Esta semana</b>
+    <div class="semana-k">${filas}</div>
+    <p class="meta">La línea marca tu objetivo (${num(plan.kcal)} kcal).${dias ? ` Media: <b>${num(suma / dias)} kcal</b> al día.` : ''}</p></div>`;
+
+  // Peso
+  const pesos = [...s.pesos].sort((a, b) => b.fecha.localeCompare(a.fecha));
+  const perdido = pf.pesoInicial - plan.w;
+  const total = pf.pesoInicial - pf.objetivo;
+  html += `<div class="card"><b>Mi peso</b>
+    <form class="rapido una" data-form="peso" style="margin-top:8px">
+      <input name="kg" inputmode="decimal" placeholder="Peso de hoy (kg)" autocomplete="off" aria-label="Peso de hoy en kilos">
+      <button class="btn prim">Apuntar</button>
+    </form>
+    <div class="resumen" style="margin-top:6px"><div class="lbl">${perdido >= 0 ? 'Llevas perdidos' : 'Has ganado'}</div>
+      <div class="cifra">${Math.abs(perdido).toLocaleString('es-ES', { maximumFractionDigits: 1 })} kg</div>
+      ${total > 0 ? `<div class="barra"><i style="width:${Math.max(0, Math.min(100, perdido / total * 100))}%"></i></div>
+      <div class="lbl">De ${num(pf.pesoInicial)} a ${num(pf.objetivo)} kg · ahora ${plan.w.toLocaleString('es-ES', { maximumFractionDigits: 1 })} kg</div>` : ''}
+    </div>
+    ${pesos.length ? `<ul class="pesos">${pesos.slice(0, 8).map(x => `<li><span>${cap(fmtCorto(x.fecha))}</span><b>${x.kg.toLocaleString('es-ES', { maximumFractionDigits: 1 })} kg</b><button class="x" data-act="borrarPeso" data-d="${x.fecha}" aria-label="Borrar">×</button></li>`).join('')}</ul>` : ''}
+  </div>
+  <p class="meta" style="text-align:center">Son cálculos orientativos. Si tienes alguna condición de salud, consúltalo con tu médico.</p>`;
+  return html;
+}
+
+function formPerfil() {
+  const pf = salud().perfil || {};
+  const fin = pf.fechaFin || iso(new Date(new Date().getFullYear(), new Date().getMonth() + 5, new Date().getDate()));
+  abrirFormulario({
+    titulo: 'Mis datos',
+    campos: [
+      { name: 'sexo', label: 'Sexo', type: 'seg', options: [['m', 'Mujer'], ['h', 'Hombre']], def: 'm' },
+      { name: 'edad', label: 'Edad', type: 'number', required: true, half: true },
+      { name: 'altura', label: 'Altura (cm)', type: 'number', required: true, half: true, placeholder: '165' },
+      { name: 'peso', label: 'Peso actual (kg)', type: 'number', required: true, half: true },
+      { name: 'objetivo', label: 'Peso objetivo (kg)', type: 'number', required: true, half: true },
+      { name: 'fechaFin', label: '¿Para cuándo?', type: 'date', required: true },
+      { name: 'actividad', label: 'Actividad física', type: 'select', options: ACTIVIDAD },
+      { name: 'kcalManual', label: 'Calorías que te ha marcado tu médico (opcional)', type: 'number', placeholder: 'Déjalo vacío para que lo calcule yo' },
+    ],
+    valores: { ...pf, peso: pesoActual() ?? pf.peso, fechaFin: fin, actividad: String(pf.actividad || '1.375') },
+    onGuardar: v => {
+      if (!(v.edad > 13 && v.edad < 100)) { toast('Revisa la edad'); return false; }
+      if (!(v.altura > 120 && v.altura < 230)) { toast('La altura va en centímetros'); return false; }
+      if (!(v.peso > 35 && v.peso < 350) || !(v.objetivo > 35 && v.objetivo < 350)) { toast('Revisa los pesos'); return false; }
+      if (v.fechaFin <= HOY()) { toast('La fecha tiene que ser futura'); return false; }
+      const s = salud(), antes = s.perfil;
+      s.perfil = { ...v, actividad: +v.actividad, kcalManual: v.kcalManual > 0 ? v.kcalManual : null,
+        pesoInicial: antes?.pesoInicial ?? v.peso, inicio: antes?.inicio ?? HOY() };
+      if (v.peso !== pesoActual()) registrarPeso(v.peso);
+      toast('Plan calculado');
+    },
+  });
+}
+
+function registrarPeso(kg) {
+  const s = salud();
+  s.pesos = s.pesos.filter(x => x.fecha !== HOY());
+  s.pesos.push({ fecha: HOY(), kg });
 }
 
 function formMenu(d) {
   const m = db.menu[d] || {};
+  const campos = [];
+  for (const [k, l] of COMIDAS) {
+    campos.push({ name: k, label: l, type: 'textarea', rows: 2, placeholder: k === 'comida' ? 'Lentejas con verduras, 1 plato…' : '' });
+    campos.push({ name: k + 'N', label: '', type: 'macros' });
+  }
+  campos.push({ name: 'ingredientes', label: 'Ingredientes que faltan (separados por comas)', placeholder: 'huevos, patatas, cebolla' });
   abrirFormulario({
     titulo: fmtLargo(d),
-    campos: [
-      { name: 'comida', label: 'Comida', type: 'textarea', rows: 2, placeholder: 'Lentejas, ensalada…' },
-      { name: 'cena', label: 'Cena', type: 'textarea', rows: 2, placeholder: 'Tortilla, fruta…' },
-      { name: 'ingredientes', label: 'Ingredientes que faltan (separados por comas)', placeholder: 'huevos, patatas, cebolla' },
-    ],
-    valores: m,
+    nota: 'Si pones cantidades («1 plato», «2 tostadas»), el cálculo de calorías sale más ajustado.',
+    extra: { texto: '✨ Calcular calorías con IA', onClick: calcularCaloriasForm },
+    campos, valores: m,
     onGuardar: v => {
-      if (!v.comida && !v.cena && !v.ingredientes) delete db.menu[d]; else db.menu[d] = v;
+      const vacio = Object.values(v).every(x => x === '' || x == null);
+      if (vacio) delete db.menu[d]; else db.menu[d] = v;
     },
     onBorrar: db.menu[d] && (() => { delete db.menu[d]; }),
     textoBorrar: 'Vaciar día',
   });
+}
+
+const ESQUEMA_NUTRI = {
+  type: 'object', additionalProperties: false, required: ['platos'],
+  properties: { platos: { type: 'array', items: {
+    type: 'object', additionalProperties: false, required: ['comida', 'kcal', 'proteina', 'grasas', 'hidratos'],
+    properties: {
+      comida: { type: 'string', enum: COMIDAS.map(c => c[0]) },
+      kcal: { type: 'number' }, proteina: { type: 'number' }, grasas: { type: 'number' }, hidratos: { type: 'number' },
+    } } } },
+};
+
+async function calcularCaloriasForm(form, boton) {
+  const platos = COMIDAS.filter(([k]) => form.elements[k].value.trim()).map(([k, l]) => `${k} (${l}): ${form.elements[k].value.trim()}`);
+  if (!platos.length) return toast('Escribe primero qué vas a comer');
+  const clave = ajuste('apiKey');
+  if (!clave) return toast('Primero pon tu clave en ⋯ → «Clave para buscar precios»');
+  const textoBoton = boton.textContent;
+  boton.disabled = true; boton.textContent = 'Calculando…';
+  let Anthropic;
+  try {
+    ({ default: Anthropic } = await import(SDK_IA));
+    const client = new Anthropic({ apiKey: clave, dangerouslyAllowBrowser: true });
+    const resp = await client.beta.messages.create({
+      model: MODELO_IA,
+      max_tokens: 4000,
+      system: 'Eres nutricionista en España. Estima las calorías (kcal) y los gramos de proteína, grasas e hidratos de carbono de cada comida que te dan. Si no indican cantidad, supón una ración normal para una persona adulta. Devuelve una entrada por cada comida recibida, usando su clave (desayuno, comida, merienda o cena).',
+      messages: [{ role: 'user', content: platos.join('\n') }],
+      output_config: { effort: 'low', format: { type: 'json_schema', schema: ESQUEMA_NUTRI } },
+      betas: ['server-side-fallback-2026-07-01'],
+      fallbacks: 'default',
+    });
+    if (resp.stop_reason === 'refusal') throw new Error('No se ha podido calcular.');
+    if (resp.stop_reason === 'max_tokens') throw new Error('La respuesta se ha cortado. Vuelve a intentarlo.');
+    const datos = JSON.parse(resp.content.filter(b => b.type === 'text').map(b => b.text).join(''));
+    for (const x of datos.platos || []) {
+      const set = (c, val) => { const el = form.elements[`${x.comida}N__${c}`]; if (el) el.value = String(Math.round(val)); };
+      set('kcal', x.kcal); set('p', x.proteina); set('g', x.grasas); set('hc', x.hidratos);
+    }
+    toast('Calorías calculadas. Revísalas y pulsa Guardar.');
+  } catch (e) {
+    if (Anthropic && e instanceof Anthropic.AuthenticationError) toast('La clave de la API no es válida');
+    else if (Anthropic && e instanceof Anthropic.RateLimitError) toast('Demasiadas peticiones; espera un momento');
+    else if (!Anthropic || (Anthropic && e instanceof Anthropic.APIConnectionError)) toast('Sin conexión a internet');
+    else toast(e?.message || 'No se ha podido calcular');
+  } finally {
+    boton.disabled = false; boton.textContent = textoBoton;
+  }
 }
 
 /* ============================================================
@@ -880,6 +1104,10 @@ function campoHTML(c, v) {
   let input;
   if (c.type === 'textarea') input = `<textarea id="${id}" name="${c.name}" rows="${c.rows || 3}"${ph}>${esc(v)}</textarea>`;
   else if (c.type === 'select') input = `<select id="${id}" name="${c.name}">${c.options.map(([val, l]) => `<option value="${esc(val)}" ${val === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
+  else if (c.type === 'macros') {
+    v = v || {};
+    return `<div class="campo macros">${MACROS.map(([k, l]) => `<label><span>${l}</span><input name="${c.name}__${k}" type="text" inputmode="decimal" autocomplete="off" value="${v[k] ?? ''}"></label>`).join('')}</div>`;
+  }
   else if (c.type === 'seg') {
     return `<div class="campo"><span>${c.label}</span><div class="seg">${c.options.map(([val, l]) =>
       `<label><input type="radio" name="${c.name}" value="${val}" ${val === v ? 'checked' : ''}><span>${l}</span></label>`).join('')}</div></div>`;
@@ -889,12 +1117,13 @@ function campoHTML(c, v) {
   return `<label class="campo ${c.half ? 'mitad' : ''}" for="${id}"><span>${c.label}</span>${input}</label>`;
 }
 
-function abrirFormulario({ titulo, nota, campos, valores = {}, onGuardar, onBorrar, textoBorrar = 'Borrar' }) {
+function abrirFormulario({ titulo, nota, extra, campos, valores = {}, onGuardar, onBorrar, textoBorrar = 'Borrar' }) {
   const dlg = $('#hoja');
   dlg.innerHTML = `<form class="form" novalidate>
     <div class="asa"></div>
     <h2>${esc(titulo)}</h2>
     ${nota ? `<p>${esc(nota)}</p>` : ''}
+    ${extra ? `<button type="button" class="btn bloque" data-x="extra" style="margin:0 0 14px">${esc(extra.texto)}</button>` : ''}
     <div class="campos">${campos.map(c => campoHTML(c, valores?.[c.name])).join('')}</div>
     <div class="botones">
       ${onBorrar ? `<button type="button" class="btn peligro" data-x="borrar">${textoBorrar}</button>` : ''}
@@ -908,6 +1137,12 @@ function abrirFormulario({ titulo, nota, campos, valores = {}, onGuardar, onBorr
     e.preventDefault();
     const v = {};
     for (const c of campos) {
+      if (c.type === 'macros') {
+        const o = {};
+        for (const [k] of MACROS) { const t = f.elements[`${c.name}__${k}`].value.trim(); const n = t ? aNumero(t) : null; if (n >= 0) o[k] = n; }
+        v[c.name] = Object.keys(o).length ? o : null;
+        continue;
+      }
       const el = f.elements[c.name];
       let val = (el.value ?? '').trim();
       if (c.type === 'number') val = val === '' ? null : aNumero(val);
@@ -923,6 +1158,7 @@ function abrirFormulario({ titulo, nota, campos, valores = {}, onGuardar, onBorr
     guardar(); cerrarHoja(); render();
   };
   f.querySelector('[data-x=cancelar]').onclick = cerrarHoja;
+  if (extra) { const bx = f.querySelector('[data-x=extra]'); bx.onclick = () => extra.onClick(f, bx); }
   const b = f.querySelector('[data-x=borrar]');
   if (b) b.onclick = () => {
     if (!confirm('¿Seguro que quieres borrarlo?')) return;
@@ -1028,6 +1264,9 @@ const ACCIONES = {
   semana: ({ n }) => { ui.semana = iso(addDays(parse(ui.semana), 7 * n)); render(); },
   semanaHoy: () => { ui.semana = iso(mondayOf(new Date())); render(); },
   editMenu: ({ d }) => formMenu(d),
+  menuModo: ({ v }) => { ui.menuModo = v; render(); },
+  perfil: () => formPerfil(),
+  borrarPeso: ({ d }) => { const s = salud(); s.pesos = s.pesos.filter(x => x.fecha !== d); guardar(); render(); },
   menuCompra: () => {
     const lunes = parse(ui.semana);
     let n = 0;
@@ -1060,6 +1299,13 @@ $('#vista').addEventListener('submit', e => {
     db.tareas.push({ id: uid(), texto: cap(texto), creado: HOY(), hecho: false });
     guardar(); render();
     $('#vista input[name=texto]').focus();
+    return;
+  }
+  if (e.target.dataset.form === 'peso') {
+    e.preventDefault();
+    const kg = aNumero(e.target.kg.value.trim());
+    if (!(kg > 35 && kg < 350)) return toast('Escribe tu peso en kilos');
+    registrarPeso(kg); guardar(); render(); toast('Peso apuntado');
     return;
   }
   if (e.target.dataset.form !== 'compra') return;
