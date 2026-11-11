@@ -11,6 +11,7 @@
   --c-menu: #dc6a26;
   --c-dinero: #0e8a8a;
   --c-planes: #d23f7c;
+  --c-tareas: #b8590f;
   --acc: var(--c-agenda);
   --acc-soft: color-mix(in srgb, var(--acc) 13%, var(--card));
   --on-acc: #fff;
@@ -23,7 +24,7 @@
     --bg: #121118; --card: #1d1b25; --tx: #eeecf5; --tx2: #a29fb2; --line: #2d2a38;
     --danger: #ff6b7d;
     --c-agenda: #9b85ff; --c-trabajo: #6aa1ff; --c-compra: #4fcf95; --c-menu: #ff9a5c;
-    --c-dinero: #4cc9c9; --c-planes: #ff7bb0;
+    --c-dinero: #4cc9c9; --c-planes: #ff7bb0; --c-tareas: #f0a050;
     --on-acc: #14121b; --shadow: none;
     color-scheme: dark;
   }
@@ -32,7 +33,7 @@
   --bg: #121118; --card: #1d1b25; --tx: #eeecf5; --tx2: #a29fb2; --line: #2d2a38;
   --danger: #ff6b7d;
   --c-agenda: #9b85ff; --c-trabajo: #6aa1ff; --c-compra: #4fcf95; --c-menu: #ff9a5c;
-  --c-dinero: #4cc9c9; --c-planes: #ff7bb0;
+  --c-dinero: #4cc9c9; --c-planes: #ff7bb0; --c-tareas: #f0a050;
   --on-acc: #14121b; --shadow: none;
   color-scheme: dark;
 }
@@ -42,6 +43,7 @@ body[data-tab="compra"]  { --acc: var(--c-compra); }
 body[data-tab="menu"]    { --acc: var(--c-menu); }
 body[data-tab="dinero"]  { --acc: var(--c-dinero); }
 body[data-tab="planes"]  { --acc: var(--c-planes); }
+body[data-tab="tareas"]  { --acc: var(--c-tareas); }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html { -webkit-text-size-adjust: 100%; }
@@ -244,3 +246,21 @@ dialog#hoja::backdrop { background: rgb(10 8 20 / .45); }
 .tiendas li.barato b { color: var(--acc); }
 .tiendas li.barato b::after { content: " ✓"; }
 .btn[disabled] { opacity: .6; }
+
+/* ---------- tareas ---------- */
+.rapido.una { grid-template-columns: 1fr auto; }
+.rapido.una .btn { grid-row: auto; grid-column: auto; }
+.ajuste-umbral { display: block; font-size: 14px; color: var(--tx2); margin: 4px 2px 14px; }
+.ajuste-umbral select { font-weight: 650; color: var(--acc); background: var(--acc-soft); border: 0; border-radius: 8px; padding: 4px 6px; margin: 0 2px; }
+.sub.alerta { color: var(--danger); }
+.item.atascada .meta { color: var(--danger); font-weight: 600; }
+.item.atascada { background: color-mix(in srgb, var(--danger) 6%, var(--card)); }
+.aviso-noti p { margin: 4px 0 0; }
+.tabs { grid-template-columns: repeat(7, 1fr); }
+.tabs button { position: relative; font-size: 10.5px; }
+.tabs button svg { width: 36px; padding: 3px 6px; }
+.tabs button[data-aviso]:not([data-aviso=""])::after {
+  content: attr(data-aviso); position: absolute; top: 0; left: 55%;
+  min-width: 17px; height: 17px; padding: 0 4px; border-radius: 9px;
+  background: var(--danger); color: #fff; font-size: 11px; font-weight: 700; line-height: 17px; text-align: center;
+}
