@@ -42,7 +42,7 @@ const cuando = s => {
 const KEY = 'miAgenda.v1';
 const vacioDB = () => ({
   agenda: [], trabajo: [], compra: [], compraHistorial: [],
-  menu: {}, presupuesto: { limites: {}, movs: [] }, planes: [],
+  menu: {}, precios: {}, presupuesto: { limites: {}, movs: [] }, planes: [],
 });
 let db = cargar();
 
@@ -60,18 +60,27 @@ function guardar() {
 /* ============================================================
    Estado de la pantalla
    ============================================================ */
+// Ajustes pequeños de este móvil (no van en la copia de seguridad)
+function ajuste(k, v) {
+  try {
+    if (v === undefined) return localStorage.getItem('miAgenda.' + k) || '';
+    if (v === null || v === '') localStorage.removeItem('miAgenda.' + k); else localStorage.setItem('miAgenda.' + k, v);
+  } catch { return ''; }
+}
+
 const ui = {
   tab: (() => { try { return localStorage.getItem('miAgenda.tab') || 'agenda'; } catch { return 'agenda'; } })(),
-  agenda: { sel: HOY(), mes: HOY().slice(0, 7) },
-  trabajo: { sel: HOY(), mes: HOY().slice(0, 7) },
+  agenda: { sel: HOY(), mes: HOY().slice(0, 7), vista: ajuste('vista.agenda') || 'dias', dias: 7 },
+  trabajo: { sel: HOY(), mes: HOY().slice(0, 7), vista: ajuste('vista.trabajo') || 'dias', dias: 7 },
+  compraModo: 'lista',
   semana: iso(mondayOf(new Date())),
   mesDinero: HOY().slice(0, 7),
   secCompra: 'Otros',
 };
 
 const SECCIONES = {
-  agenda:  { titulo: 'Agenda',          render: () => vistaCalendario('agenda'),  nuevo: () => formEvento('agenda') },
-  trabajo: { titulo: 'Agenda de trabajo', render: () => vistaCalendario('trabajo'), nuevo: () => formEvento('trabajo') },
+  agenda:  { titulo: 'Agenda',          render: () => vistaCalendario('agenda'),  nuevo: () => formEvento('agenda', null, ui.agenda.vista === 'dias' ? HOY() : ui.agenda.sel) },
+  trabajo: { titulo: 'Agenda de trabajo', render: () => vistaCalendario('trabajo'), nuevo: () => formEvento('trabajo', null, ui.trabajo.vista === 'dias' ? HOY() : ui.trabajo.sel) },
   compra:  { titulo: 'Lista de la compra', render: vistaCompra },
   menu:    { titulo: 'Menú de la semana', render: vistaMenu },
   dinero:  { titulo: 'Presupuesto',     render: vistaDinero, nuevo: () => formMovimiento() },
@@ -85,7 +94,7 @@ function render() {
   $('#titulo').textContent = s.titulo;
   $('#hoyTxt').textContent = cap(parse(HOY()).toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' }));
   $('#vista').innerHTML = s.render();
-  $('#fab').hidden = !s.nuevo;
+  $('#fab').hidden = !s.nuevo || (ui.tab === 'compra');
   document.querySelectorAll('.tabs button').forEach(b => {
     if (b.dataset.tab === ui.tab) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
   });
@@ -122,7 +131,49 @@ const estaHecho = (it, d) => repite(it) ? (it.hechos || []).includes(d) : !!it.h
 const delDia = (lista, d) => lista.filter(i => ocurre(i, d))
   .sort((x, y) => (x.hora || '99').localeCompare(y.hora || '99'));
 
+function selectorVista(k) {
+  const v = ui[k].vista;
+  return `<div class="pestanas" role="tablist">
+    <button role="tab" aria-selected="${v === 'dias'}" data-act="vistaCal" data-k="${k}" data-v="dias">Por días</button>
+    <button role="tab" aria-selected="${v === 'mes'}" data-act="vistaCal" data-k="${k}" data-v="mes">Mes</button>
+  </div>`;
+}
+
+function nombreDia(s) {
+  const n = diasHasta(s);
+  const largo = parse(s).toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
+  if (n === 0) return `Hoy <small>· ${largo}</small>`;
+  if (n === 1) return `Mañana <small>· ${largo}</small>`;
+  if (n === 2) return `Pasado mañana <small>· ${largo}</small>`;
+  return cap(largo);
+}
+
+function vistaDias(k) {
+  const st = ui[k], lista = db[k];
+  let html = '';
+  for (let i = 0; i < st.dias; i++) {
+    const s = iso(addDays(new Date(), i));
+    const items = delDia(lista, s);
+    html += `<section class="bloque-dia ${i === 0 ? 'es-hoy' : ''}">
+      <div class="cab-dia">
+        <h2>${nombreDia(s)}</h2>
+        <button class="mas-dia" data-act="nuevoEnDia" data-k="${k}" data-d="${s}" aria-label="Añadir el ${fmtLargo(s)}">+</button>
+      </div>
+      ${items.length
+        ? `<ul class="lista">${items.map(it => filaEvento(k, it, s)).join('')}</ul>`
+        : `<p class="libre">${i === 0 ? 'Nada apuntado para hoy' : 'Libre'}</p>`}
+    </section>`;
+  }
+  html += `<button class="btn bloque" data-act="masDias" data-k="${k}">Ver 7 días más</button>`;
+  return html;
+}
+
 function vistaCalendario(k) {
+  if (ui[k].vista === 'dias') return selectorVista(k) + vistaDias(k);
+  return selectorVista(k) + vistaMes(k);
+}
+
+function vistaMes(k) {
   const st = ui[k], lista = db[k], hoy = HOY();
   const [y, m] = st.mes.split('-').map(Number);
   let d = mondayOf(new Date(y, m - 1, 1));
@@ -184,10 +235,10 @@ function filaEvento(k, it, d, conFecha) {
   </li>`;
 }
 
-function formEvento(k, it) {
+function formEvento(k, it, fecha) {
   const campos = [
     { name: 'titulo', label: k === 'trabajo' ? '¿Qué hay que hacer?' : '¿Qué es?', required: true, placeholder: k === 'trabajo' ? 'Reunión, entrega, llamada…' : 'Médico, cumpleaños, quedada…' },
-    { name: 'fecha', label: 'Día', type: 'date', required: true, def: ui[k].sel },
+    { name: 'fecha', label: 'Día', type: 'date', required: true, def: fecha || ui[k].sel },
     { name: 'hora', label: 'Hora', type: 'time', half: true },
     { name: 'fin', label: 'Hasta', type: 'time', half: true },
     { name: 'lugar', label: k === 'trabajo' ? 'Lugar o cliente' : 'Lugar' },
@@ -214,6 +265,14 @@ function formEvento(k, it) {
 const PASILLOS = ['Fruta y verdura', 'Carne y pescado', 'Lácteos y huevos', 'Panadería', 'Despensa', 'Congelados', 'Bebidas', 'Limpieza e higiene', 'Otros'];
 
 function vistaCompra() {
+  const tabs = `<div class="pestanas" role="tablist">
+    <button role="tab" aria-selected="${ui.compraModo === 'lista'}" data-act="compraModo" data-v="lista">Lista</button>
+    <button role="tab" aria-selected="${ui.compraModo === 'precios'}" data-act="compraModo" data-v="precios">Comparar precios</button>
+  </div>`;
+  return tabs + (ui.compraModo === 'precios' ? vistaPrecios() : vistaLista());
+}
+
+function vistaLista() {
   const pend = db.compra.filter(i => !i.hecho), comprados = db.compra.filter(i => i.hecho);
   const sugerencias = [...new Set([...db.compraHistorial, ...db.compra.map(i => i.nombre)])];
   let html = `<form class="rapido" data-form="compra">
@@ -269,6 +328,226 @@ function formCompra(it) {
     onGuardar: v => { Object.assign(it, v); },
     onBorrar: () => { db.compra = db.compra.filter(x => x !== it); },
   });
+}
+
+/* ============================================================
+   Comparador de precios de supermercados
+   ============================================================ */
+const TIENDAS = ['Mercadona', 'Lidl', 'Eroski', 'Dia', 'Carrefour'];
+const clavePrecio = n => n.trim().toLowerCase();
+const preciosDe = n => (db.precios ||= {})[clavePrecio(n)] ||= {};
+let busqueda = { activa: false, estado: '' };
+
+function productosComparar() {
+  const pend = db.compra.filter(i => !i.hecho);
+  return [...new Set((pend.length ? pend : db.compra).map(i => i.nombre))];
+}
+
+function vistaPrecios() {
+  const nombres = productosComparar();
+  if (!nombres.length) return `<p class="vacio">Añade productos a la lista y aquí verás en qué supermercado sale más barata tu compra.</p>`;
+
+  // Total por supermercado
+  const tot = TIENDAS.map(t => {
+    let total = 0, n = 0;
+    for (const nom of nombres) { const p = preciosDe(nom)[t]; if (p) { total += p.precio; n++; } }
+    return { t, total, n };
+  });
+  let mezcla = 0, nMezcla = 0;
+  for (const nom of nombres) {
+    const ps = Object.values(preciosDe(nom)).map(p => p.precio);
+    if (ps.length) { mezcla += Math.min(...ps); nMezcla++; }
+  }
+  const hayPrecios = tot.some(x => x.n);
+  const maxN = Math.max(...tot.map(x => x.n));
+  const orden = [...tot].sort((a, b) => b.n - a.n || a.total - b.total);
+  const ganador = hayPrecios ? orden[0].t : null;
+
+  let html = `<div class="card ia">
+    <button class="btn prim bloque" style="margin-top:0" data-act="buscarIA" ${busqueda.activa ? 'disabled' : ''}>
+      ${busqueda.activa ? 'Buscando…' : `🔎 Buscar precios de ${nombres.length > 10 ? 'los 10 primeros productos' : 'mi lista'}`}</button>
+    <p class="meta" id="estadoIA" style="text-align:center;margin-top:8px">${esc(busqueda.estado) || 'Busca los precios actuales en internet, o toca un precio para apuntarlo tú.'}</p>
+  </div>`;
+
+  if (hayPrecios) {
+    html += `<div class="card"><b>Comprando toda la lista en…</b>
+      ${orden.map(x => `<div class="tienda-total ${x.t === ganador ? 'gana' : ''}">
+        <span>${x.t}${x.t === ganador ? ' <span class="chip">La más barata</span>' : ''}</span>
+        <b>${x.n ? euro(x.total) : '—'}</b>
+        <small>${x.n === nombres.length ? 'todos los productos' : `${x.n} de ${nombres.length} productos`}</small>
+      </div>`).join('')}
+      ${nMezcla ? `<p class="meta" style="margin-top:10px">Comprando cada cosa donde es más barata: <b>${euro(mezcla)}</b>${nMezcla < nombres.length ? ` (${nMezcla} de ${nombres.length} productos)` : ''}.</p>` : ''}
+      ${maxN < nombres.length ? `<p class="meta" style="margin-top:6px">Ojo: los totales solo suman los productos con precio en cada súper.</p>` : ''}
+    </div>`;
+  }
+
+  for (const nom of nombres) {
+    const pr = preciosDe(nom);
+    const vals = Object.values(pr).map(p => p.precio);
+    const min = vals.length ? Math.min(...vals) : null;
+    const fechas = Object.values(pr).map(p => p.fecha).filter(Boolean).sort();
+    html += `<div class="card producto-precios">
+      <div class="t">${esc(nom)}</div>
+      ${fechas.length ? `<div class="meta">Precios del ${fmtCorto(fechas[fechas.length - 1])}</div>` : ''}
+      <ul class="tiendas">${TIENDAS.map(t => {
+        const p = pr[t];
+        return `<li data-act="editPrecio" data-p="${esc(nom)}" data-t="${t}" class="${p && p.precio === min && vals.length > 1 ? 'barato' : ''}">
+          <span class="tn">${t}</span>
+          <span class="desc">${p ? esc([p.producto, p.unitario].filter(Boolean).join(' · ')) : ''}</span>
+          <b>${p ? euro(p.precio) : '<span class="nada">Añadir</span>'}</b>
+        </li>`;
+      }).join('')}</ul>
+    </div>`;
+  }
+  html += `<p class="meta" style="text-align:center">Los precios pueden cambiar según la zona y las ofertas.</p>`;
+  return html;
+}
+
+function formPrecio(nombre, tienda) {
+  const pr = preciosDe(nombre), p = pr[tienda];
+  abrirFormulario({
+    titulo: `${nombre} en ${tienda}`,
+    campos: [
+      { name: 'precio', label: 'Precio (€)', type: 'number', required: true, placeholder: '1,25' },
+      { name: 'producto', label: 'Producto y formato', placeholder: 'Marca blanca, 1 L' },
+    ],
+    valores: p,
+    onGuardar: v => {
+      if (!(v.precio > 0)) { toast('Pon un precio mayor que 0'); return false; }
+      pr[tienda] = { precio: v.precio, producto: v.producto, fecha: HOY() };
+    },
+    onBorrar: p && (() => { delete pr[tienda]; }),
+    textoBorrar: 'Quitar precio',
+  });
+}
+
+function formClave(yBuscar) {
+  abrirFormulario({
+    titulo: 'Buscar precios en internet',
+    nota: 'Para buscar los precios automáticamente, la app usa Claude con búsqueda en internet. Necesitas una clave de la API de Anthropic (se consigue en console.anthropic.com). Cada búsqueda tiene un pequeño coste que se cobra en esa cuenta. La clave se guarda solo en este móvil.',
+    campos: [
+      { name: 'clave', label: 'Clave de la API', placeholder: 'sk-ant-…' },
+      { name: 'cp', label: 'Tu código postal (opcional)', placeholder: '28001' },
+    ],
+    valores: { clave: ajuste('apiKey'), cp: ajuste('cp') },
+    onGuardar: v => {
+      if (v.clave && !v.clave.startsWith('sk-ant-')) { toast('La clave empieza por sk-ant-'); return false; }
+      ajuste('apiKey', v.clave); ajuste('cp', v.cp);
+      if (yBuscar && v.clave) setTimeout(buscarPreciosIA, 50);
+    },
+  });
+}
+
+const MODELO_IA = 'claude-opus-5-5';
+const SDK_IA = 'https://cdn.jsdelivr.net/npm/@anthropic-ai/sdk@1.3.0/+esm';
+const PROMPT_PRECIOS = `Eres un comparador de precios de supermercados en España. Te doy una lista de la compra
+y averiguas cuánto cuesta cada producto HOY en Mercadona, Lidl, Eroski, Dia y Carrefour.
+
+Cómo trabajar:
+- Busca precios reales y actuales en las tiendas online oficiales (tienda.mercadona.es,
+  lidl.es, supermercado.eroski.es, dia.es, carrefour.es). Si una tienda no lo muestra,
+  puedes usar comparadores de precios fiables.
+- Compara productos equivalentes y de formato parecido. Por defecto elige la marca propia
+  o la opción más barata de cada súper, salvo que el producto nombre una marca concreta.
+- Si un producto es ambiguo (p. ej. "queso"), elige la variante más común.
+- Si no encuentras un precio en una tienda, pon null. Nunca te inventes un precio.
+
+Responde SOLO con un bloque \`\`\`json y nada más, con esta forma exacta:
+{"productos":[{"nombre":"<el nombre exactamente como te lo he dado>","tiendas":{
+"Mercadona":{"producto":"<nombre y formato, p. ej. Leche entera Hacendado 1 L>","precio":0.95,"unitario":"0,95 €/L"},
+"Lidl":null,"Eroski":{...},"Dia":{...},"Carrefour":{...}}}]}
+"precio" es el precio del envase en euros, como número con punto decimal.`;
+
+function extraerJSON(texto) {
+  const bloques = [...texto.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)].map(m => m[1]);
+  const candidato = bloques.length ? bloques[bloques.length - 1] : texto.slice(texto.indexOf('{'), texto.lastIndexOf('}') + 1);
+  return JSON.parse(candidato);
+}
+
+function pintarEstado(t) {
+  busqueda.estado = t;
+  const el = document.getElementById('estadoIA');
+  if (el) el.textContent = t;
+}
+
+async function buscarPreciosIA() {
+  if (busqueda.activa) return;
+  const clave = ajuste('apiKey');
+  if (!clave) return formClave(true);
+  const nombres = productosComparar().slice(0, 10);
+  if (!nombres.length) return toast('Añade primero productos a la lista');
+
+  busqueda.activa = true; busqueda.estado = 'Buscando precios… puede tardar 1 o 2 minutos. No cierres la app.';
+  render();
+  let Anthropic;
+  try {
+    ({ default: Anthropic } = await import(SDK_IA));
+    const client = new Anthropic({ apiKey: clave, dangerouslyAllowBrowser: true });
+    const cp = ajuste('cp');
+    const messages = [{
+      role: 'user',
+      content: `Lista de la compra:\n${nombres.map(n => '- ' + n).join('\n')}${cp ? `\n\nMi código postal es ${cp}; úsalo si la tienda pide zona.` : ''}`,
+    }];
+    let consultas = 0, resp;
+    for (let i = 0; i < 8; i++) {
+      const stream = client.beta.messages.stream({
+        model: MODELO_IA,
+        max_tokens: 32000,
+        system: PROMPT_PRECIOS,
+        tools: [
+          { type: 'web_search_20260209', name: 'web_search', max_uses: 40,
+            user_location: { type: 'approximate', country: 'ES', timezone: 'Europe/Madrid' } },
+          { type: 'web_fetch_20260209', name: 'web_fetch', max_uses: 30 },
+        ],
+        messages,
+        thinking: { type: 'adaptive' },
+        output_config: { effort: 'medium' },
+        betas: ['server-side-fallback-2026-07-01'],
+        fallbacks: 'default',
+      });
+      stream.on('streamEvent', ev => {
+        if (ev.type === 'content_block_start' && ev.content_block.type === 'server_tool_use') {
+          consultas++;
+          pintarEstado(`Buscando precios… (${consultas} consultas en internet)`);
+        }
+      });
+      resp = await stream.finalMessage();
+      if (resp.stop_reason !== 'pause_turn') break;
+      // El servidor hizo una pausa: se le devuelve lo que lleva y continúa solo
+      const ultimo = messages[messages.length - 1];
+      if (ultimo.role === 'assistant') ultimo.content = [...ultimo.content, ...resp.content];
+      else messages.push({ role: 'assistant', content: resp.content });
+    }
+    if (resp.stop_reason === 'pause_turn') throw new Error('La búsqueda se ha alargado demasiado. Prueba con menos productos.');
+    if (resp.stop_reason === 'refusal') throw new Error('No se ha podido completar la búsqueda.');
+
+    const texto = resp.content.filter(b => b.type === 'text').map(b => b.text).join('');
+    let datos;
+    try { datos = extraerJSON(texto); } catch { throw new Error('No he entendido la respuesta. Vuelve a intentarlo.'); }
+
+    let n = 0;
+    for (const prod of datos.productos || []) {
+      const nombre = nombres.find(x => clavePrecio(x) === clavePrecio(String(prod.nombre || '')));
+      if (!nombre) continue;
+      const pr = preciosDe(nombre);
+      for (const t of TIENDAS) {
+        const d = prod.tiendas?.[t];
+        const precio = Number(d?.precio);
+        if (d && precio > 0) { pr[t] = { precio, producto: d.producto || '', unitario: d.unitario || '', fecha: HOY(), auto: true }; n++; }
+      }
+    }
+    guardar();
+    busqueda.estado = n ? `${n} precios encontrados. Toca cualquiera para corregirlo.` : 'No he encontrado precios. Prueba a escribir los productos de forma más concreta.';
+  } catch (e) {
+    if (Anthropic && e instanceof Anthropic.AuthenticationError) { busqueda.estado = 'La clave de la API no es válida.'; setTimeout(() => formClave(), 50); }
+    else if (Anthropic && e instanceof Anthropic.RateLimitError) busqueda.estado = 'Demasiadas búsquedas seguidas; espera un momento.';
+    else if (Anthropic && e instanceof Anthropic.APIConnectionError) busqueda.estado = 'Sin conexión. Comprueba tu internet.';
+    else if (!Anthropic) busqueda.estado = 'Sin conexión. Hace falta internet para buscar precios.';
+    else busqueda.estado = 'Error: ' + (e?.message || e);
+  } finally {
+    busqueda.activa = false;
+    render();
+  }
 }
 
 /* ============================================================
@@ -487,11 +766,12 @@ function campoHTML(c, v) {
   return `<label class="campo ${c.half ? 'mitad' : ''}" for="${id}"><span>${c.label}</span>${input}</label>`;
 }
 
-function abrirFormulario({ titulo, campos, valores = {}, onGuardar, onBorrar, textoBorrar = 'Borrar' }) {
+function abrirFormulario({ titulo, nota, campos, valores = {}, onGuardar, onBorrar, textoBorrar = 'Borrar' }) {
   const dlg = $('#hoja');
   dlg.innerHTML = `<form class="form" novalidate>
     <div class="asa"></div>
     <h2>${esc(titulo)}</h2>
+    ${nota ? `<p>${esc(nota)}</p>` : ''}
     <div class="campos">${campos.map(c => campoHTML(c, valores?.[c.name])).join('')}</div>
     <div class="botones">
       ${onBorrar ? `<button type="button" class="btn peligro" data-x="borrar">${textoBorrar}</button>` : ''}
@@ -544,6 +824,7 @@ function abrirOpciones() {
     <p>Todo lo que apuntas se guarda solo en este móvil. Descarga una copia de vez en cuando para no perder nada si cambias de móvil o borras el navegador.</p>
     <button class="btn prim" id="exp">Descargar copia</button>
     <label class="btn">Restaurar una copia<input type="file" id="imp" accept="application/json,.json" hidden></label>
+    <button class="btn" id="claveOp">Clave para buscar precios</button>
     <button class="btn" id="cerrarOp">Cerrar</button>
   </div>`;
   $('#exp', dlg).onclick = () => {
@@ -567,6 +848,7 @@ function abrirOpciones() {
     } catch { toast('Ese archivo no es una copia válida'); }
   };
   $('#cerrarOp', dlg).onclick = cerrarHoja;
+  $('#claveOp', dlg).onclick = () => formClave();
   dlg.showModal();
 }
 
@@ -589,6 +871,14 @@ const ACCIONES = {
     guardar(); render();
   },
   editEv: ({ k, id }) => formEvento(k, buscar(db[k], id)),
+  vistaCal: ({ k, v }) => { ui[k].vista = v; ajuste('vista.' + k, v); render(); },
+  nuevoEnDia: ({ k, d }) => formEvento(k, null, d),
+  masDias: ({ k }) => { ui[k].dias += 7; render(); },
+
+  compraModo: ({ v }) => { ui.compraModo = v; render(); },
+  editPrecio: ({ p, t }) => formPrecio(p, t),
+  buscarIA: () => buscarPreciosIA(),
+  claveIA: () => formClave(),
 
   toggleCompra: ({ id }) => { const i = buscar(db.compra, id); i.hecho = !i.hecho; guardar(); render(); },
   editCompra: ({ id }) => formCompra(buscar(db.compra, id)),

@@ -213,3 +213,34 @@ dialog#hoja::backdrop { background: rgb(10 8 20 / .45); }
   transition: .2s; max-width: calc(100% - 32px);
 }
 #toast.ver { opacity: 1; transform: translate(-50%, 0); }
+
+/* ---------- pestañas (Por días / Mes, Lista / Precios) ---------- */
+.pestanas { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 4px; padding: 4px; margin-bottom: 14px; background: var(--card); border-radius: 14px; box-shadow: var(--shadow); }
+.pestanas button { padding: 9px 6px; border-radius: 10px; font-weight: 650; font-size: 15px; color: var(--tx2); }
+.pestanas button[aria-selected="true"] { background: var(--acc); color: var(--on-acc); }
+
+/* ---------- agenda por días ---------- */
+.bloque-dia { margin-bottom: 18px; }
+.cab-dia { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 2px 8px; }
+.cab-dia h2 { font-size: 17px; font-weight: 750; }
+.cab-dia h2 small { font-size: 14px; font-weight: 500; color: var(--tx2); }
+.es-hoy .cab-dia h2 { color: var(--acc); }
+.mas-dia { flex: none; width: 34px; height: 34px; border-radius: 10px; background: var(--acc-soft); color: var(--acc); font-size: 22px; line-height: 1; }
+.libre { color: var(--tx2); font-size: 14.5px; padding: 12px 14px; border-radius: var(--r); border: 1.5px dashed var(--line); }
+
+/* ---------- comparador de precios ---------- */
+.tienda-total { display: grid; grid-template-columns: 1fr auto; gap: 0 10px; padding: 10px 0; border-top: 1px solid var(--line); align-items: center; }
+.tienda-total:first-of-type { margin-top: 8px; }
+.tienda-total small { grid-column: 1 / -1; color: var(--tx2); font-size: 12.5px; }
+.tienda-total.gana b { color: var(--acc); font-size: 18px; }
+.producto-precios .t { font-size: 17px; }
+.tiendas { list-style: none; margin-top: 8px; }
+.tiendas li { display: grid; grid-template-columns: 92px 1fr auto; gap: 8px; align-items: center; padding: 9px 8px; margin: 0 -8px; border-radius: 10px; cursor: pointer; }
+.tiendas li + li { border-top: 1px solid var(--line); }
+.tiendas .tn { font-weight: 600; font-size: 14.5px; }
+.tiendas .desc { font-size: 12.5px; color: var(--tx2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.tiendas .nada { font-weight: 500; font-size: 13.5px; color: var(--acc); }
+.tiendas li.barato { background: var(--acc-soft); border-top-color: transparent; }
+.tiendas li.barato b { color: var(--acc); }
+.tiendas li.barato b::after { content: " ✓"; }
+.btn[disabled] { opacity: .6; }
