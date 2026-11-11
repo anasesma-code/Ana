@@ -42,7 +42,7 @@ const cuando = s => {
 const KEY = 'miAgenda.v1';
 const vacioDB = () => ({
   agenda: [], trabajo: [], compra: [], compraHistorial: [],
-  menu: {}, precios: {}, presupuesto: { limites: {}, movs: [] }, planes: [],
+  menu: {}, precios: {}, presupuesto: { limites: {}, movs: [] }, planes: [], tareas: [], ajustes: {},
 });
 let db = cargar();
 
@@ -55,6 +55,7 @@ function cargar() {
 function guardar() {
   try { localStorage.setItem(KEY, JSON.stringify(db)); }
   catch { toast('No se ha podido guardar'); }
+  publicarResumenTareas();
 }
 
 /* ============================================================
@@ -81,11 +82,14 @@ const ui = {
 const SECCIONES = {
   agenda:  { titulo: 'Agenda',          render: () => vistaCalendario('agenda'),  nuevo: () => formEvento('agenda', null, ui.agenda.vista === 'dias' ? HOY() : ui.agenda.sel) },
   trabajo: { titulo: 'Agenda de trabajo', render: () => vistaCalendario('trabajo'), nuevo: () => formEvento('trabajo', null, ui.trabajo.vista === 'dias' ? HOY() : ui.trabajo.sel) },
+  tareas:  { titulo: 'Tareas pendientes', render: vistaTareas },
   compra:  { titulo: 'Lista de la compra', render: vistaCompra },
   menu:    { titulo: 'Menú de la semana', render: vistaMenu },
   dinero:  { titulo: 'Presupuesto',     render: vistaDinero, nuevo: () => formMovimiento() },
   planes:  { titulo: 'Planes',          render: vistaPlanes, nuevo: () => formPlan() },
 };
+const tabURL = new URLSearchParams(location.search).get('tab');
+if (tabURL && SECCIONES[tabURL]) ui.tab = tabURL;
 if (!SECCIONES[ui.tab]) ui.tab = 'agenda';
 
 function render() {
@@ -94,7 +98,11 @@ function render() {
   $('#titulo').textContent = s.titulo;
   $('#hoyTxt').textContent = cap(parse(HOY()).toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' }));
   $('#vista').innerHTML = s.render();
-  $('#fab').hidden = !s.nuevo || (ui.tab === 'compra');
+  $('#fab').hidden = !s.nuevo;
+  const n = tareasAtascadas().length;
+  const b = document.querySelector('.tabs [data-tab="tareas"]');
+  b.dataset.aviso = n || '';
+  b.setAttribute('aria-label', n ? `Tareas, ${n} llevan mucho tiempo` : 'Tareas');
   document.querySelectorAll('.tabs button').forEach(b => {
     if (b.dataset.tab === ui.tab) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
   });
@@ -257,6 +265,121 @@ function formEvento(k, it, fecha) {
     },
     onBorrar: it && (() => { db[k] = db[k].filter(x => x !== it); toast('Borrado'); }),
   });
+}
+
+/* ============================================================
+   Tareas pendientes (sin fecha) con aviso si llevan mucho tiempo
+   ============================================================ */
+const umbralTareas = () => db.ajustes?.umbralTareas ?? 7;
+const edadTarea = t => Math.max(0, -diasHasta(t.creado));
+const umbralDe = t => t.aviso || umbralTareas();
+const atascada = t => !t.hecho && edadTarea(t) > umbralDe(t);
+const tareasAtascadas = () => db.tareas.filter(atascada);
+const hace = n => n === 0 ? 'Hoy' : n === 1 ? 'Ayer' : `Hace ${n} días`;
+
+function vistaTareas() {
+  const pend = db.tareas.filter(t => !t.hecho).sort((a, b) => a.creado.localeCompare(b.creado));
+  const viejas = pend.filter(atascada), resto = pend.filter(t => !atascada(t));
+  const hechas = db.tareas.filter(t => t.hecho).sort((a, b) => (b.hechoEl || '').localeCompare(a.hechoEl || ''));
+  const opciones = [1, 2, 3, 5, 7, 10, 14, 21, 30, 60];
+
+  let html = `<form class="rapido una" data-form="tarea">
+      <input name="texto" placeholder="Nueva tarea…" autocomplete="off" enterkeyhint="done" aria-label="Nueva tarea">
+      <button class="btn prim">Añadir</button>
+    </form>
+    <label class="ajuste-umbral">Avisarme si una tarea lleva más de
+      <select data-cambio="umbral">${opciones.map(n => `<option value="${n}" ${n === umbralTareas() ? 'selected' : ''}>${n} ${n === 1 ? 'día' : 'días'}</option>`).join('')}</select>
+      sin hacer</label>`;
+
+  if (avisosDisponibles() && Notification.permission !== 'granted') {
+    html += `<div class="card aviso-noti"><b>🔔 Recibir avisos en el móvil</b>
+      <p class="meta">Para que el móvil te avise aunque no tengas la app abierta.</p>
+      <button class="btn prim bloque" data-act="activarAvisos">Activar avisos</button></div>`;
+  }
+
+  if (!db.tareas.length) return html + `<p class="vacio" style="margin-top:14px">No tienes tareas pendientes.<br>Escribe arriba lo que tengas que hacer, sin fecha.</p>`;
+
+  const fila = t => {
+    const e = edadTarea(t), mal = atascada(t);
+    return `<li class="item ${t.hecho ? 'hecho' : ''} ${mal ? 'atascada' : ''}">
+      <button class="chk" data-act="toggleTarea" data-id="${t.id}" aria-label="Marcar como hecha"></button>
+      <div class="cuerpo" data-act="editTarea" data-id="${t.id}">
+        <div class="t">${esc(t.texto)}</div>
+        <div class="meta">${t.hecho ? `Hecha ${hace(Math.max(0, -diasHasta(t.hechoEl || HOY()))).toLowerCase()}` : (mal ? `⚠️ Lleva ${e} días sin hacer` : `Apuntada: ${hace(e).toLowerCase()}`)}${t.aviso && !t.hecho ? ` · aviso a los ${t.aviso} días` : ''}</div>
+        ${t.notas ? `<div class="nota">${esc(t.notas)}</div>` : ''}
+      </div></li>`;
+  };
+  if (viejas.length) html += `<h2 class="sub alerta">Llevan demasiado tiempo <small>(${viejas.length})</small></h2><ul class="lista">${viejas.map(fila).join('')}</ul>`;
+  if (resto.length) html += `<h2 class="sub">Por hacer <small>(${resto.length})</small></h2><ul class="lista">${resto.map(fila).join('')}</ul>`;
+  if (!pend.length) html += `<p class="vacio" style="margin-top:14px">¡Todo hecho! 🎉</p>`;
+  if (hechas.length) html += `<h2 class="sub">Hechas <small>(${hechas.length})</small></h2><ul class="lista">${hechas.map(fila).join('')}</ul>
+    <button class="btn bloque" data-act="borrarHechas">Borrar las tareas hechas</button>`;
+  return html;
+}
+
+function formTarea(t) {
+  abrirFormulario({
+    titulo: 'Tarea',
+    campos: [
+      { name: 'texto', label: 'Qué hay que hacer', required: true },
+      { name: 'notas', label: 'Notas', type: 'textarea' },
+      { name: 'aviso', label: `Avisarme si sigue sin hacer después de… (días; vacío = ${umbralTareas()})`, type: 'number', placeholder: String(umbralTareas()) },
+    ],
+    valores: t,
+    onGuardar: v => { t.texto = v.texto; t.notas = v.notas; t.aviso = v.aviso > 0 ? Math.round(v.aviso) : null; },
+    onBorrar: () => { db.tareas = db.tareas.filter(x => x !== t); },
+  });
+}
+
+/* ---------- avisos ---------- */
+const avisosDisponibles = () => 'Notification' in window && 'serviceWorker' in navigator;
+
+// El service worker no puede leer los datos de la app: le dejamos un resumen en la caché
+async function publicarResumenTareas() {
+  try {
+    if (!('caches' in window)) return;
+    const c = await caches.open('mi-agenda-datos');
+    const resumen = { umbral: umbralTareas(), tareas: db.tareas.filter(t => !t.hecho).map(t => ({ texto: t.texto, creado: t.creado, aviso: t.aviso || null })) };
+    await c.put('resumen-tareas', new Response(JSON.stringify(resumen), { headers: { 'Content-Type': 'application/json' } }));
+  } catch {}
+}
+
+async function activarAvisos() {
+  if (!avisosDisponibles()) return toast('Este navegador no permite avisos');
+  const r = await Notification.requestPermission();
+  if (r !== 'granted') { toast('Sin permiso no puedo avisarte'); render(); return; }
+  await programarRevision();
+  toast('Avisos activados');
+  render();
+  revisarTareas(true);
+}
+
+// Android (con la app instalada) despierta la app de vez en cuando para revisar las tareas
+async function programarRevision() {
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    if (!('periodicSync' in reg)) return;
+    const st = await navigator.permissions.query({ name: 'periodic-background-sync' });
+    if (st.state === 'granted') await reg.periodicSync.register('revisar-tareas', { minInterval: 12 * 60 * 60 * 1000 });
+  } catch {}
+}
+
+// Al abrir la app: si hay tareas atascadas, avisar (una vez al día como mucho)
+async function revisarTareas(forzar) {
+  const viejas = tareasAtascadas();
+  if (!viejas.length) return;
+  if (!forzar && ajuste('ultimoAviso') === HOY()) return;
+  ajuste('ultimoAviso', HOY());
+  if (ui.tab !== 'tareas') toast(viejas.length === 1 ? '⚠️ Tienes 1 tarea que lleva mucho tiempo sin hacer' : `⚠️ Tienes ${viejas.length} tareas que llevan mucho tiempo sin hacer`);
+  if (avisosDisponibles() && Notification.permission === 'granted') {
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      reg.showNotification('Tareas pendientes', {
+        body: viejas.length === 1 ? `«${viejas[0].texto}» lleva ${edadTarea(viejas[0])} días sin hacer` : `${viejas.length} tareas llevan mucho tiempo sin hacer: ${viejas.slice(0, 3).map(t => t.texto).join(', ')}${viejas.length > 3 ? '…' : ''}`,
+        icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', tag: 'tareas-atascadas', data: { tab: 'tareas' },
+      });
+    } catch {}
+  }
 }
 
 /* ============================================================
@@ -882,6 +1005,19 @@ const ACCIONES = {
 
   toggleCompra: ({ id }) => { const i = buscar(db.compra, id); i.hecho = !i.hecho; guardar(); render(); },
   editCompra: ({ id }) => formCompra(buscar(db.compra, id)),
+  toggleTarea: ({ id }) => {
+    const t = buscar(db.tareas, id);
+    t.hecho = !t.hecho; t.hechoEl = t.hecho ? HOY() : null;
+    guardar(); render();
+    if (t.hecho) toast('¡Hecho! 👏');
+  },
+  editTarea: ({ id }) => formTarea(buscar(db.tareas, id)),
+  borrarHechas: () => {
+    if (!confirm('¿Borrar todas las tareas hechas?')) return;
+    db.tareas = db.tareas.filter(t => !t.hecho); guardar(); render();
+  },
+  activarAvisos: () => activarAvisos(),
+
   vaciarCompra: () => {
     const fuera = db.compra.filter(i => i.hecho);
     db.compraHistorial = [...new Set([...fuera.map(i => i.nombre), ...db.compraHistorial])].slice(0, 300);
@@ -917,6 +1053,15 @@ $('#vista').addEventListener('click', e => {
 });
 
 $('#vista').addEventListener('submit', e => {
+  if (e.target.dataset.form === 'tarea') {
+    e.preventDefault();
+    const texto = e.target.texto.value.trim();
+    if (!texto) return;
+    db.tareas.push({ id: uid(), texto: cap(texto), creado: HOY(), hecho: false });
+    guardar(); render();
+    $('#vista input[name=texto]').focus();
+    return;
+  }
   if (e.target.dataset.form !== 'compra') return;
   e.preventDefault();
   const f = e.target, nombre = f.nombre.value;
@@ -925,6 +1070,13 @@ $('#vista').addEventListener('submit', e => {
   if (!anadirCompra(nombre, f.sec.value)) toast('Ya está en la lista');
   guardar(); render();
   $('#vista input[name=nombre]').focus();
+});
+
+$('#vista').addEventListener('change', e => {
+  if (e.target.dataset.cambio === 'umbral') {
+    db.ajustes.umbralTareas = +e.target.value;
+    guardar(); render();
+  }
 });
 
 document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => irA(b.dataset.tab));
@@ -948,6 +1100,7 @@ document.addEventListener('visibilitychange', () => {
     ui.semana = iso(mondayOf(new Date()));
     render();
   }
+  if (document.visibilityState === 'visible') revisarTareas();
 });
 
 render();
@@ -957,3 +1110,6 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
 navigator.storage?.persist?.().catch(() => {});
+publicarResumenTareas();
+if (avisosDisponibles() && Notification.permission === 'granted') programarRevision();
+setTimeout(() => revisarTareas(), 800);
