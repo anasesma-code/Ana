@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Comparador de precios</title>
+<meta name="description" content="Compara precios de alimentos en Mercadona, Lidl, Eroski, Dia y Carrefour.">
+<meta name="theme-color" content="#0f766e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Precios">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<style>
+:root{--bg:#f6f7f5;--card:#fff;--text:#1c1f1e;--muted:#5e6663;--line:#dfe3e1;--accent:#0f766e;--accent-ink:#fff;--soft:#e6f3f1;--warn:#9a3412}
+@media (prefers-color-scheme:dark){:root{--bg:#121514;--card:#1b1f1e;--text:#e9eeec;--muted:#a1aaa7;--line:#2e3432;--accent:#2dd4bf;--accent-ink:#06201d;--soft:#16302c;--warn:#fdba74}}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:720px;margin:0 auto;padding:16px 16px calc(24px + env(safe-area-inset-bottom))}
+header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:4px 0 12px}
+h1{font-size:1.35rem;margin:0}
+.sub{color:var(--muted);font-size:.9rem;margin:0 0 14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:14px}
+label{display:block;font-weight:600;margin-bottom:6px}
+textarea,input{width:100%;font:inherit;color:var(--text);background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+textarea{min-height:84px;resize:vertical}
+.row{display:flex;gap:10px;margin-top:10px}
+.row input{flex:1}
+button{font:inherit;border:0;border-radius:10px;padding:12px 16px;cursor:pointer}
+.primary{background:var(--accent);color:var(--accent-ink);font-weight:600;width:100%;margin-top:12px}
+.primary:disabled{opacity:.6}
+.ghost{white-space:nowrap;background:transparent;color:var(--muted);padding:8px;font-size:.9rem}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.chip{background:var(--soft);color:var(--text);padding:6px 10px;border-radius:999px;font-size:.85rem}
+#status{color:var(--muted);font-size:.9rem;min-height:1.4em;margin:8px 0 0}
+#status.err{color:var(--warn)}
+.answer{overflow-wrap:anywhere}
+.answer h1,.answer h2,.answer h3{font-size:1.1rem;margin:18px 0 8px}
+.answer .tw{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:8px 0}
+.answer table{border-collapse:collapse;font-size:.88rem;min-width:100%}
+.answer th,.answer td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}
+.answer th{background:var(--soft);white-space:nowrap}
+.answer a{color:var(--accent)}
+.followup{display:flex;gap:8px;margin-top:12px}
+.followup input{flex:1}
+.followup button{background:var(--accent);color:var(--accent-ink);font-weight:600}
+.hidden{display:none}
+small{color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>🛒 Comparador de precios</h1>
+    <button class="ghost" id="openKey" type="button">Clave API</button>
+  </header>
+  <p class="sub">Mercadona · Lidl · Eroski · Dia · Carrefour</p>
+
+  <section class="card hidden" id="keyCard">
+    <label for="key">Tu clave de la API de Claude</label>
+    <input id="key" type="password" autocomplete="off" placeholder="sk-ant-...">
+    <small>Se guarda solo en este móvil. Consíguela en console.anthropic.com → API Keys.</small>
+    <button class="primary" id="saveKey" type="button">Guardar</button>
+  </section>
+
+  <form class="card" id="form">
+    <label for="foods">¿Qué alimentos quieres comparar?</label>
+    <textarea id="foods" placeholder="Ej.: leche entera, huevos, aceite de oliva virgen extra"></textarea>
+    <div class="chips" id="chips"></div>
+    <div class="row"><input id="cp" inputmode="numeric" maxlength="5" placeholder="Código postal (opcional)"></div>
+    <button class="primary" id="go" type="submit">Comparar precios</button>
+    <p id="status" role="status"></p>
+  </form>
+
+  <section class="card hidden" id="result">
+    <div class="answer" id="answer"></div>
+    <form class="followup" id="followForm">
+      <input id="follow" placeholder="Pregunta algo más…">
+      <button type="submit">Enviar</button>
+    </form>
+  </section>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/marked@18.1.1/lib/marked.umd.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.4.17/dist/purify.min.js"></script>
+<script type="module">
+import Anthropic from "https://cdn.jsdelivr.net/npm/@anthropic-ai/sdk@1.3.0/+esm";
+
+const MODEL = "claude-opus-5-5";
+const MAX_CONTINUACIONES = 8;
+const SYSTEM_PROMPT = `Eres un comparador de precios de supermercados en España. El usuario te da uno o
+varios alimentos y tú averiguas cuánto cuestan HOY en estos cinco supermercados:
+Mercadona, Lidl, Eroski, Dia y Carrefour.
+
+Cómo trabajar:
+- Usa la búsqueda web y la lectura de páginas para encontrar precios reales y
+  actuales. Prioriza las tiendas online oficiales (tienda.mercadona.es, lidl.es,
+  supermercado.eroski.es, dia.es, carrefour.es). Si una tienda no muestra el
+  producto online, puedes usar comparadores de precios fiables, indicando la fuente.
+- Compara productos equivalentes: misma categoría y formato parecido (p. ej.
+  leche entera brik 1 L de marca blanca). Por defecto elige la marca propia o la
+  opción más barata de cada súper, salvo que el usuario pida una marca concreta.
+- Como los formatos varían, compara siempre por precio unitario (€/kg, €/L o
+  €/unidad) además del precio del envase.
+- Si no encuentras un precio, escribe "no encontrado"; nunca te lo inventes.
+- Si un alimento es ambiguo (p. ej. "queso"), elige la variante más común y dilo.
+
+Formato de la respuesta (en español, Markdown). Se leerá en un MÓVIL:
+1. Para cada alimento, una tabla compacta con columnas:
+   Súper | Producto | Precio | €/kg o €/L
+   (pon el formato dentro de la columna Producto) y debajo una línea
+   "**Más barato: <súper>**" con el ahorro frente al más caro.
+2. Si hay varios alimentos, al final un "Resumen de la cesta": el súper más
+   barato para cada alimento y qué supermercado sale más barato comprando toda
+   la cesta en un solo sitio (sumando solo los productos encontrados en todos).
+3. Una nota breve con la fecha de consulta y que los precios pueden variar según
+   la zona y las ofertas.
+Sé conciso: nada de explicar cómo has buscado.`;
+
+const TOOLS = [
+  { type: "web_search_20260209", name: "web_search", max_uses: 30,
+    user_location: { type: "approximate", country: "ES", timezone: "Europe/Madrid" } },
+  { type: "web_fetch_20260209", name: "web_fetch", max_uses: 30 },
+];
+
+const $ = (id) => document.getElementById(id);
+const store = {
+  get(k) { try { return localStorage.getItem(k) || ""; } catch { return ""; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+};
+
+let messages = [];
+let busy = false;
+
+// --- clave API ---
+function showKey(show) { $("keyCard").classList.toggle("hidden", !show); if (show) $("key").focus(); }
+$("openKey").onclick = () => { $("key").value = store.get("apiKey"); showKey($("keyCard").classList.contains("hidden")); };
+$("saveKey").onclick = () => {
+  const v = $("key").value.trim();
+  if (!v.startsWith("sk-ant-")) { setStatus("La clave debe empezar por sk-ant-", true); return; }
+  store.set("apiKey", v); showKey(false); setStatus("Clave guardada ✓");
+};
+if (!store.get("apiKey")) showKey(true);
+
+// --- ejemplos y código postal recordado ---
+$("cp").value = store.get("cp");
+for (const ej of ["leche entera", "huevos docena", "aceite de oliva virgen extra", "pan de molde", "plátanos"]) {
+  const b = document.createElement("button");
+  b.type = "button"; b.className = "chip"; b.textContent = "+ " + ej;
+  b.onclick = () => { const t = $("foods"); t.value = t.value.trim() ? t.value.trim().replace(/,?$/, ", ") + ej : ej; };
+  $("chips").appendChild(b);
+}
+
+function setStatus(text, err = false) { $("status").textContent = text; $("status").classList.toggle("err", err); }
+
+function render(md) {
+  const html = DOMPurify.sanitize(marked.parse(md || ""), { ADD_ATTR: ["target"] });
+  $("answer").innerHTML = html;
+  for (const t of $("answer").querySelectorAll("table")) {
+    const w = document.createElement("div"); w.className = "tw"; t.replaceWith(w); w.appendChild(t);
+  }
+  for (const a of $("answer").querySelectorAll("a")) { a.target = "_blank"; a.rel = "noopener"; }
+  $("result").classList.remove("hidden");
+}
+
+async function consultar(texto) {
+  const apiKey = store.get("apiKey");
+  if (!apiKey) { showKey(true); setStatus("Primero guarda tu clave de la API.", true); return; }
+  busy = true; $("go").disabled = true;
+  const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true });
+  messages.push({ role: "user", content: texto });
+  let busquedas = 0;
+  setStatus("Buscando precios… (puede tardar 1-2 minutos, no cierres la página)");
+  try {
+    for (let i = 0; i < MAX_CONTINUACIONES; i++) {
+      const stream = client.beta.messages.stream({
+        model: MODEL,
+        max_tokens: 32000,
+        system: SYSTEM_PROMPT,
+        tools: TOOLS,
+        messages,
+        thinking: { type: "adaptive" },
+        output_config: { effort: "medium" },
+        betas: ["server-side-fallback-2026-07-01"],
+        fallbacks: "default",
+      });
+      let parcial = "";
+      stream.on("streamEvent", (ev) => {
+        if (ev.type === "content_block_start" && ev.content_block.type === "server_tool_use") {
+          busquedas++;
+          setStatus(`Buscando precios… (${busquedas} consultas web)`);
+        }
+      });
+      stream.on("text", (delta) => { parcial += delta; render(parcial); });
+      const resp = await stream.finalMessage();
+
+      const last = messages[messages.length - 1];
+      if (last.role === "assistant") last.content = [...last.content, ...resp.content];
+      else messages.push({ role: "assistant", content: resp.content });
+
+      if (resp.stop_reason === "pause_turn") continue;
+      if (resp.stop_reason === "refusal") { setStatus("No he podido completar esta consulta. Prueba a reformularla.", true); return; }
+      const textoFinal = resp.content.filter((b) => b.type === "text").map((b) => b.text).join("").trim();
+      render(textoFinal + (resp.stop_reason === "max_tokens" ? "\n\n_(Respuesta cortada: prueba con menos alimentos a la vez.)_" : ""));
+      setStatus("");
+      $("result").scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+    setStatus("La búsqueda se ha alargado demasiado; prueba con menos alimentos.", true);
+  } catch (e) {
+    if (messages[messages.length - 1].role === "user") messages.pop();
+    if (e instanceof Anthropic.AuthenticationError) { showKey(true); setStatus("La clave de la API no es válida.", true); }
+    else if (e instanceof Anthropic.RateLimitError) setStatus("Demasiadas peticiones; espera un momento.", true);
+    else if (e instanceof Anthropic.APIConnectionError) setStatus("Sin conexión. Comprueba tu internet y vuelve a intentarlo.", true);
+    else setStatus("Error: " + (e?.message || e), true);
+  } finally {
+    busy = false; $("go").disabled = false;
+  }
+}
+
+$("form").onsubmit = (ev) => {
+  ev.preventDefault();
+  if (busy) return;
+  const foods = $("foods").value.trim();
+  if (!foods) { setStatus("Escribe al menos un alimento.", true); return; }
+  const cp = $("cp").value.trim();
+  store.set("cp", cp);
+  messages = []; // nueva comparación
+  $("answer").innerHTML = ""; $("result").classList.add("hidden");
+  let texto = `Compara el precio de: ${foods}`;
+  if (cp) texto += `\n(Mi código postal es ${cp}; úsalo si la tienda pide zona.)`;
+  consultar(texto);
+};
+
+$("followForm").onsubmit = (ev) => {
+  ev.preventDefault();
+  const q = $("follow").value.trim();
+  if (!q || busy || !messages.length) return;
+  $("follow").value = "";
+  consultar(q);
+};
+</script>
+</body>
+</html>
