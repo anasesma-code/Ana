@@ -882,22 +882,66 @@ function formMenu(d) {
   const m = db.menu[d] || {};
   const campos = [];
   for (const [k, l] of COMIDAS) {
-    campos.push({ name: k, label: l, type: 'textarea', rows: 2, placeholder: k === 'comida' ? 'Lentejas con verduras, 1 plato…' : '' });
+    campos.push({ name: k, label: l, type: 'textarea', rows: 2, placeholder: k === 'comida' ? '1 plato de lentejas, 1 manzana…' : k === 'desayuno' ? 'Café con leche y 2 tostadas con aceite' : '' });
     campos.push({ name: k + 'N', label: '', type: 'macros' });
   }
   campos.push({ name: 'ingredientes', label: 'Ingredientes que faltan (separados por comas)', placeholder: 'huevos, patatas, cebolla' });
   abrirFormulario({
     titulo: fmtLargo(d),
-    nota: 'Si pones cantidades («1 plato», «2 tostadas»), el cálculo de calorías sale más ajustado.',
-    extra: { texto: '✨ Calcular calorías con IA', onClick: calcularCaloriasForm },
+    nota: 'Escribe lo que comes con cantidades («2 tostadas», «1 plato de lentejas», «pollo 150 g») y pulsa Calcular. Al guardar, las comidas sin calorías se calculan solas.',
+    extra: { texto: '🧮 Calcular calorías', onClick: calcularCaloriasLocal },
     campos, valores: m,
     onGuardar: v => {
+      // Rellena solo las comidas que tienen texto y no tienen calorías
+      for (const [k] of COMIDAS) {
+        if (v[k] && !(v[k + 'N']?.kcal > 0)) {
+          const r = estimarCalorias(v[k]);
+          if (r.kcal > 0) v[k + 'N'] = { kcal: r.kcal, p: r.p, g: r.g, hc: r.hc };
+        }
+      }
       const vacio = Object.values(v).every(x => x === '' || x == null);
       if (vacio) delete db.menu[d]; else db.menu[d] = v;
     },
     onBorrar: db.menu[d] && (() => { delete db.menu[d]; }),
     textoBorrar: 'Vaciar día',
   });
+  // Botón de IA solo si hay clave, para afinar
+  const f = $('#hoja form');
+  const info = document.createElement('div');
+  info.className = 'calc-info'; info.id = 'calcInfo'; info.hidden = true;
+  f.querySelector('[data-x=extra]').after(info);
+  if (ajuste('apiKey')) {
+    const bia = document.createElement('button');
+    bia.type = 'button'; bia.className = 'btn bloque'; bia.style.margin = '-6px 0 14px';
+    bia.textContent = '✨ Afinar con IA';
+    bia.onclick = () => calcularCaloriasForm(f, bia);
+    info.before(bia);
+  }
+}
+
+function mostrarInfoCalc(html, error) {
+  const el = document.getElementById('calcInfo');
+  if (!el) return;
+  el.hidden = false; el.classList.toggle('error', !!error); el.innerHTML = html;
+}
+
+function calcularCaloriasLocal(form) {
+  const lineas = [], dudas = [];
+  let algo = false;
+  for (const [k, l] of COMIDAS) {
+    const texto = form.elements[k].value.trim();
+    if (!texto) continue;
+    algo = true;
+    const r = estimarCalorias(texto);
+    const set = (c, val) => { form.elements[`${k}N__${c}`].value = r.kcal ? String(val) : ''; };
+    set('kcal', r.kcal); set('p', r.p); set('g', r.g); set('hc', r.hc);
+    lineas.push(`<b>${l}:</b> ${r.kcal ? `${num(r.kcal)} kcal` : 'no lo reconozco'}${r.partes.length ? ` <small>(${esc(r.partes.join(', '))})</small>` : ''}`);
+    dudas.push(...r.dudas);
+  }
+  if (!algo) return mostrarInfoCalc('Escribe primero qué vas a comer.', true);
+  mostrarInfoCalc(lineas.join('<br>') +
+    (dudas.length ? `<br><span class="aviso-txt">No he reconocido: ${esc([...new Set(dudas)].join(', '))}. Pon sus calorías a mano si quieres contarlas.</span>` : '') +
+    '<br><small>Son valores aproximados. Revísalos y pulsa Guardar.</small>');
 }
 
 const ESQUEMA_NUTRI = {
@@ -912,14 +956,15 @@ const ESQUEMA_NUTRI = {
 
 async function calcularCaloriasForm(form, boton) {
   const platos = COMIDAS.filter(([k]) => form.elements[k].value.trim()).map(([k, l]) => `${k} (${l}): ${form.elements[k].value.trim()}`);
-  if (!platos.length) return toast('Escribe primero qué vas a comer');
+  if (!platos.length) return mostrarInfoCalc('Escribe primero qué vas a comer.', true);
   const clave = ajuste('apiKey');
-  if (!clave) return toast('Primero pon tu clave en ⋯ → «Clave para buscar precios»');
+  if (!clave) return mostrarInfoCalc('Para usar la IA necesitas una clave de la API (en ⋯ → «Clave para buscar precios»). Sin ella puedes usar «Calcular calorías».', true);
   const textoBoton = boton.textContent;
-  boton.disabled = true; boton.textContent = 'Calculando…';
+  boton.disabled = true; boton.textContent = 'Calculando con IA…';
   let Anthropic;
   try {
-    ({ default: Anthropic } = await import(SDK_IA));
+    try { ({ default: Anthropic } = await import(SDK_IA)); }
+    catch { throw new Error('No se ha podido cargar la IA. ¿Tienes internet?'); }
     const client = new Anthropic({ apiKey: clave, dangerouslyAllowBrowser: true });
     const resp = await client.beta.messages.create({
       model: MODELO_IA,
@@ -930,19 +975,26 @@ async function calcularCaloriasForm(form, boton) {
       betas: ['server-side-fallback-2026-07-01'],
       fallbacks: 'default',
     });
-    if (resp.stop_reason === 'refusal') throw new Error('No se ha podido calcular.');
+    if (resp.stop_reason === 'refusal') throw new Error('La IA no ha podido calcularlo.');
     if (resp.stop_reason === 'max_tokens') throw new Error('La respuesta se ha cortado. Vuelve a intentarlo.');
     const datos = JSON.parse(resp.content.filter(b => b.type === 'text').map(b => b.text).join(''));
+    const lineas = [];
     for (const x of datos.platos || []) {
       const set = (c, val) => { const el = form.elements[`${x.comida}N__${c}`]; if (el) el.value = String(Math.round(val)); };
       set('kcal', x.kcal); set('p', x.proteina); set('g', x.grasas); set('hc', x.hidratos);
+      const nombre = (COMIDAS.find(c => c[0] === x.comida) || [, x.comida])[1];
+      lineas.push(`<b>${esc(nombre)}:</b> ${num(x.kcal)} kcal`);
     }
-    toast('Calorías calculadas. Revísalas y pulsa Guardar.');
+    mostrarInfoCalc('✨ Calculado con IA<br>' + lineas.join('<br>') + '<br><small>Revísalo y pulsa Guardar.</small>');
   } catch (e) {
-    if (Anthropic && e instanceof Anthropic.AuthenticationError) toast('La clave de la API no es válida');
-    else if (Anthropic && e instanceof Anthropic.RateLimitError) toast('Demasiadas peticiones; espera un momento');
-    else if (!Anthropic || (Anthropic && e instanceof Anthropic.APIConnectionError)) toast('Sin conexión a internet');
-    else toast(e?.message || 'No se ha podido calcular');
+    let msg;
+    if (Anthropic && e instanceof Anthropic.AuthenticationError) msg = 'La clave de la API no es válida. Cámbiala en ⋯ → «Clave para buscar precios».';
+    else if (Anthropic && e instanceof Anthropic.PermissionDeniedError) msg = 'Tu clave no tiene permiso para usar este modelo.';
+    else if (Anthropic && e instanceof Anthropic.RateLimitError) msg = 'Demasiadas peticiones o sin saldo en la cuenta de la API. Espera un momento o revisa tu saldo.';
+    else if (Anthropic && e instanceof Anthropic.BadRequestError) msg = 'La API ha rechazado la petición: ' + (e?.error?.error?.message || e.message);
+    else if (Anthropic && e instanceof Anthropic.APIConnectionError) msg = 'Sin conexión a internet.';
+    else msg = e?.message || 'No se ha podido calcular.';
+    mostrarInfoCalc(esc(msg) + '<br><small>Puedes usar «Calcular calorías», que funciona sin IA.</small>', true);
   } finally {
     boton.disabled = false; boton.textContent = textoBoton;
   }
