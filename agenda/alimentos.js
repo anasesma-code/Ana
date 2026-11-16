@@ -9,11 +9,11 @@
 // "menor": acompañamiento que no se cuenta si en la misma frase hay un plato principal.
 const ALIMENTOS = [
   // Desayuno y pan
-  ['café con leche|cafe con leche|café con leche semidesnatada', 200, 35, 1.8, 1.2, 3.5, 'taza'],
+  ['café con leche|cafe con leche|café con leche semidesnatada|café con leche semi desnatada|café con leche semi densatada|café con leche desnatada|café con leche entera', 200, 35, 1.8, 1.2, 3.5, 'taza'],
   ['cortado', 80, 30, 1.6, 1.6, 2.2, 'taza'],
   ['café|cafe|infusión|infusion|té|manzanilla', 60, 2, 0.1, 0, 0.3, 'taza', true],
-  ['leche desnatada|desnatada', 250, 35, 3.4, 0.2, 4.9, 'vaso'],
-  ['leche semidesnatada|semidesnatada', 250, 46, 3.2, 1.6, 4.7, 'vaso'],
+  ['leche desnatada|desnatada|densatada', 250, 35, 3.4, 0.2, 4.9, 'vaso'],
+  ['leche semidesnatada|semidesnatada|leche semi desnatada|semi desnatada|semi densatada', 250, 46, 3.2, 1.6, 4.7, 'vaso'],
   ['bebida de avena|leche de avena', 250, 45, 0.6, 1.5, 7, 'vaso'],
   ['bebida de soja|leche de soja', 250, 40, 3.3, 1.8, 2.5, 'vaso'],
   ['leche', 250, 63, 3.2, 3.6, 4.7, 'vaso'],
@@ -240,6 +240,11 @@ function estimarCalorias(texto) {
     hallados = hallados.filter((h, j) => hallados.findIndex(x => x.a === h.a) === j);
     // Los huevos de una tortilla o un revuelto ya están contados
     if (hallados.some(h => /tortilla|revuelto/.test(h.orig))) hallados = hallados.filter(h => h.orig !== 'huevo');
+    // "huevos cocidos", "garbanzos cocidos": aquí "cocido" describe el alimento anterior, no es el plato
+    hallados = hallados.filter((h, j) => !(h.orig === 'cocido' && j > 0));
+    // "café con leche semidesnatada": el tipo de leche ya va dentro del café, no es otro vaso
+    const cafe = hallados.find(h => /con leche/.test(h.orig));
+    if (cafe) hallados = hallados.filter(h => h === cafe || h.i < cafe.fin || !/leche|desnatada|densatada|bebida de/.test(h.orig));
     // "crema de calabacín", "sopa de verduras": la verdura forma parte del plato
     hallados = hallados.filter((h, j) => !(h.a.menor && j > 0 && /^\s*de\s*$/.test(trozo.slice(hallados[j - 1].fin, h.i))
       || (h.a.menor && j > 0 && / de$/.test(hallados[j - 1].orig))));
