@@ -295,3 +295,25 @@ dialog#hoja::backdrop { background: rgb(10 8 20 / .45); }
 .calc-info.error { background: color-mix(in srgb, var(--danger) 10%, var(--card)); color: var(--danger); }
 .calc-info small { color: var(--tx2); }
 .calc-info .aviso-txt { color: var(--danger); }
+
+/* ---------- apuntar hablando ---------- */
+.acciones-top { display: flex; gap: 4px; align-items: center; }
+.voz-btn { background: var(--acc); color: var(--on-acc); }
+.voz-btn svg { fill: none; stroke: currentColor; }
+.form.voz .mic { display: grid; place-items: center; width: 84px; height: 84px; margin: 4px auto 6px; border-radius: 50%; background: var(--acc); color: var(--on-acc); box-shadow: 0 6px 18px color-mix(in srgb, var(--acc) 40%, transparent); }
+.form.voz .mic svg { width: 40px; height: 40px; }
+.form.voz .mic.grabando { background: var(--danger); animation: latido 1.2s ease-in-out infinite; }
+@keyframes latido { 50% { transform: scale(1.08); } }
+@media (prefers-reduced-motion: reduce) { .form.voz .mic.grabando { animation: none; } }
+.mic-estado { text-align: center; font-weight: 600; color: var(--tx) !important; }
+.form.voz textarea { width: 100%; padding: 11px 12px; border-radius: 12px; border: 1.5px solid var(--line); background: var(--bg); resize: vertical; }
+.form.voz textarea:focus { outline: none; border-color: var(--acc); }
+.voz-dicho { font-style: italic; font-size: 14px !important; background: var(--bg); border-radius: 10px; padding: 8px 10px; }
+.voz-lista { list-style: none; display: flex; flex-direction: column; gap: 10px; }
+.voz-item { background: var(--bg); border-radius: 14px; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.voz-fila1 { display: flex; justify-content: space-between; align-items: center; }
+.voz-item select { font-weight: 650; border: 0; background: var(--acc-soft); color: var(--acc); border-radius: 10px; padding: 7px 10px; }
+.voz-item input { width: 100%; min-width: 0; padding: 9px 10px; border-radius: 10px; border: 1.5px solid var(--line); background: var(--card); }
+.voz-fila2 { display: grid; grid-template-columns: 1.4fr 1fr; gap: 8px; }
+.voz-fila2[hidden] { display: none; }
+.voz-item .x { width: 32px; height: 32px; font-size: 22px; color: var(--tx2); }

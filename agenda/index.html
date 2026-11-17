@@ -17,9 +17,14 @@
     <p class="hoy-txt" id="hoyTxt"></p>
     <h1 id="titulo">Agenda</h1>
   </div>
+  <div class="acciones-top">
+  <button class="icon-btn voz-btn" id="btnVoz" aria-label="Apuntar hablando">
+    <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+  </button>
   <button class="icon-btn" id="btnOpciones" aria-label="Copia de seguridad">
     <svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
   </button>
+  </div>
 </header>
 
 <main id="vista" aria-live="polite"></main>
@@ -43,5 +48,6 @@
 
 <script src="alimentos.js"></script>
 <script src="app.js"></script>
+<script src="voz.js"></script>
 </body>
 </html>
