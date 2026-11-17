@@ -855,7 +855,7 @@ function formPerfil() {
       { name: 'objetivo', label: 'Peso objetivo (kg)', type: 'number', required: true, half: true },
       { name: 'fechaFin', label: '¿Para cuándo?', type: 'date', required: true },
       { name: 'actividad', label: 'Actividad física', type: 'select', options: ACTIVIDAD },
-      { name: 'kcalManual', label: 'Calorías que te ha marcado tu médico (opcional)', type: 'number', placeholder: 'Déjalo vacío para que lo calcule yo' },
+      { name: 'kcalManual', label: 'Tu objetivo de calorías (opcional)', type: 'number', placeholder: 'Déjalo vacío para que lo calcule yo con tu fecha' },
     ],
     valores: { ...pf, peso: pesoActual() ?? pf.peso, fechaFin: fin, actividad: String(pf.actividad || '1.375') },
     onGuardar: v => {
