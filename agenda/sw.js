@@ -1,6 +1,6 @@
 // Guarda la app en el móvil para que funcione sin conexión y avisa de tareas atascadas.
-const CACHE = 'mi-agenda-v5';
-const ARCHIVOS = ['./', 'index.html', 'styles.css', 'alimentos.js', 'app.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png'];
+const CACHE = 'mi-agenda-v6';
+const ARCHIVOS = ['./', 'index.html', 'styles.css', 'alimentos.js', 'app.js', 'voz.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ARCHIVOS)).then(() => self.skipWaiting()));
