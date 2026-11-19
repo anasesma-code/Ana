@@ -790,23 +790,45 @@ function vistaCalorias() {
     <button class="chip" data-act="perfil" style="margin-top:8px">Cambiar mis datos</button>
   </div>`;
 
+  let avisoRapido = '';
   if (plan.recortado && !plan.manual) {
-    html += `<div class="card aviso">
+    avisoRapido = `<div class="card aviso">
       <b>⚠️ Tu objetivo va muy rápido</b>
       <p class="meta">Para perder ${num(plan.kgPerder)} kg antes del ${parse(pf.fechaFin).toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' })} tendrías que comer unas <b>${num(Math.max(0, plan.kcalNecesarias))} kcal al día</b>${plan.kcalNecesarias < plan.minimo ? ', por debajo del mínimo recomendable' : ''}: más de un 1 % de tu peso a la semana.</p>
       <p class="meta">Bajar tan rápido suele hacer perder músculo, cansa mucho y es fácil recuperar el peso. Te he puesto el ritmo máximo prudente. Si un médico o nutricionista te marca otra cifra, ponla en «Cambiar mis datos».</p>
     </div>`;
   }
 
-  // Hoy
-  const t = totalDia(db.menu[HOY()]);
+  // Día elegido: ayer, hoy, mañana u otro
+  const dSel = ui.diaKcal || HOY();
+  const rel = diasHasta(dSel);
+  const nombreSel = rel === 0 ? 'Hoy' : rel === -1 ? 'Ayer' : rel === 1 ? 'Mañana' : cap(fmtCorto(dSel));
+  const m = db.menu[dSel] || {};
+  const t = totalDia(m);
   const barra = (v, obj, l) => `<div class="cat"><span>${l}</span><b>${num(v)} / ${num(obj)}${l === 'Calorías' ? ' kcal' : ' g'}</b>
     <div class="barra ${v > obj * 1.05 ? 'mal' : ''}"><i style="width:${Math.min(100, v / obj * 100)}%"></i></div></div>`;
-  html += `<div class="card"><b>Hoy</b>${t.n
-    ? barra(t.kcal, plan.kcal, 'Calorías') + barra(t.p, plan.p, 'Proteína') + barra(t.g, plan.g, 'Grasas') + barra(t.hc, plan.hc, 'Hidratos') +
-      `<p class="meta" style="margin-top:8px">${t.kcal <= plan.kcal ? `Te quedan <b>${num(plan.kcal - t.kcal)} kcal</b> para hoy.` : `Te has pasado <b>${num(t.kcal - plan.kcal)} kcal</b>.`}</p>`
-    : `<p class="meta" style="margin-top:6px">Aún no has apuntado calorías hoy.</p>`}
-    <button class="btn bloque" data-act="editMenu" data-d="${HOY()}">Apuntar lo que como hoy</button></div>`;
+  const resumenTxt = rel < 0
+    ? (t.kcal <= plan.kcal ? `Comiste <b>${num(t.kcal)} kcal</b>, ${num(plan.kcal - t.kcal)} por debajo de tu objetivo.` : `Te pasaste <b>${num(t.kcal - plan.kcal)} kcal</b>.`)
+    : rel > 0
+      ? (t.kcal <= plan.kcal ? `Tienes previstas <b>${num(t.kcal)} kcal</b>; te quedan ${num(plan.kcal - t.kcal)} libres.` : `Lo previsto se pasa <b>${num(t.kcal - plan.kcal)} kcal</b> de tu objetivo.`)
+      : (t.kcal <= plan.kcal ? `Te quedan <b>${num(plan.kcal - t.kcal)} kcal</b> para hoy.` : `Te has pasado <b>${num(t.kcal - plan.kcal)} kcal</b>.`);
+  const comidasSel = COMIDAS.filter(([k]) => m[k]).map(([k, l]) => `<li><span>${l}</span><span class="desc">${esc(m[k])}</span><b>${m[k + 'N']?.kcal ? num(m[k + 'N'].kcal) : '–'}</b></li>`).join('');
+  const chip = (d, l) => `<button class="chip ${dSel === d ? 'activo' : ''}" data-act="diaKcal" data-d="${d}">${l}</button>`;
+  html += `<div class="card">
+    <div class="nav-fila dia-kcal">
+      <button class="flecha" data-act="diaKcal" data-d="${iso(addDays(parse(dSel), -1))}" aria-label="Día anterior">‹</button>
+      <span class="lbl">${nombreSel}<br><small>${cap(fmtLargo(dSel))}</small></span>
+      <button class="flecha" data-act="diaKcal" data-d="${iso(addDays(parse(dSel), 1))}" aria-label="Día siguiente">›</button>
+    </div>
+    <div class="chips-dia">${chip(iso(addDays(new Date(), -1)), 'Ayer')}${chip(HOY(), 'Hoy')}${chip(iso(addDays(new Date(), 1)), 'Mañana')}</div>
+    ${t.n
+      ? barra(t.kcal, plan.kcal, 'Calorías') + barra(t.p, plan.p, 'Proteína') + barra(t.g, plan.g, 'Grasas') + barra(t.hc, plan.hc, 'Hidratos') +
+        `<p class="meta" style="margin-top:8px">${resumenTxt}</p>`
+      : `<p class="meta" style="margin-top:6px">${rel < 0 ? 'No apuntaste nada este día.' : rel > 0 ? 'Aún no has planeado las comidas de este día.' : 'Aún no has apuntado calorías hoy.'}</p>`}
+    ${comidasSel ? `<ul class="tiendas comidas-dia">${comidasSel}</ul>` : ''}
+    <button class="btn prim bloque" data-act="editMenu" data-d="${dSel}">${rel < 0 ? `Apuntar lo que comí ${rel === -1 ? 'ayer' : 'ese día'}` : rel > 0 ? `Apuntar lo que comeré ${rel === 1 ? 'mañana' : 'ese día'}` : 'Apuntar lo que como hoy'}</button></div>`;
+
+  html += avisoRapido;
 
   // Semana
   const lunes = mondayOf(new Date());
@@ -814,13 +836,13 @@ function vistaCalorias() {
   for (let i = 0; i < 7; i++) {
     const d = iso(addDays(lunes, i)), td = totalDia(db.menu[d]);
     if (td.n) { suma += td.kcal; dias++; }
-    filas += `<div class="dia-k ${d === HOY() ? 'hoy' : ''}"><span>${DIAS_C[i]}</span>
+    filas += `<div class="dia-k ${d === HOY() ? 'hoy' : ''} ${d === dSel ? 'sel' : ''}" data-act="diaKcal" data-d="${d}" role="button" aria-label="${fmtLargo(d)}"><span>${DIAS_C[i]}</span>
       <div class="col"><i class="${td.kcal > plan.kcal * 1.05 ? 'mal' : ''}" style="height:${Math.min(100, td.kcal / plan.kcal * 80)}%"></i><em style="bottom:80%"></em></div>
       <small>${td.n ? num(td.kcal) : '–'}</small></div>`;
   }
   html += `<div class="card"><b>Esta semana</b>
     <div class="semana-k">${filas}</div>
-    <p class="meta">La línea marca tu objetivo (${num(plan.kcal)} kcal).${dias ? ` Media: <b>${num(suma / dias)} kcal</b> al día.` : ''}</p></div>`;
+    <p class="meta">La línea marca tu objetivo (${num(plan.kcal)} kcal). Toca un día para verlo arriba.${dias ? ` Media: <b>${num(suma / dias)} kcal</b> al día.` : ''}</p></div>`;
 
   // Peso
   const pesos = [...s.pesos].sort((a, b) => b.fecha.localeCompare(a.fecha));
@@ -1317,6 +1339,7 @@ const ACCIONES = {
   semanaHoy: () => { ui.semana = iso(mondayOf(new Date())); render(); },
   editMenu: ({ d }) => formMenu(d),
   menuModo: ({ v }) => { ui.menuModo = v; render(); },
+  diaKcal: ({ d }) => { ui.diaKcal = d; render(); },
   perfil: () => formPerfil(),
   borrarPeso: ({ d }) => { const s = salud(); s.pesos = s.pesos.filter(x => x.fecha !== d); guardar(); render(); },
   menuCompra: () => {
@@ -1396,6 +1419,7 @@ document.addEventListener('visibilitychange', () => {
     ui.agenda.sel = ui.trabajo.sel = ultimoDia;
     ui.agenda.mes = ui.trabajo.mes = ultimoDia.slice(0, 7);
     ui.semana = iso(mondayOf(new Date()));
+    ui.diaKcal = null;
     render();
   }
   if (document.visibilityState === 'visible') revisarTareas();

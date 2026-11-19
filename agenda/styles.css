@@ -317,3 +317,13 @@ dialog#hoja::backdrop { background: rgb(10 8 20 / .45); }
 .voz-fila2 { display: grid; grid-template-columns: 1.4fr 1fr; gap: 8px; }
 .voz-fila2[hidden] { display: none; }
 .voz-item .x { width: 32px; height: 32px; font-size: 22px; color: var(--tx2); }
+
+/* ---------- calorías: elegir día ---------- */
+.dia-kcal .lbl small { font-weight: 500; color: var(--tx2); font-size: 13px; }
+.chips-dia { display: flex; gap: 6px; justify-content: center; margin: 2px 0 10px; }
+.chips-dia .chip { padding: 7px 14px; background: var(--bg); color: var(--tx2); }
+.chips-dia .chip.activo { background: var(--acc); color: var(--on-acc); }
+.comidas-dia li { grid-template-columns: 78px 1fr auto; cursor: default; }
+.comidas-dia li > span:first-child { font-weight: 600; font-size: 14px; }
+.dia-k { cursor: pointer; border-radius: 8px; }
+.dia-k.sel { background: var(--acc-soft); }
